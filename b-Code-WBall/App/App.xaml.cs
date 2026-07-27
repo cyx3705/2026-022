@@ -86,7 +86,7 @@ public partial class App : Application
         var config = new ShellConfig
         {
             AppName = "WBall",
-            AppVersion = "3.0.0",
+            AppVersion = "3.1.0",
             DataService = dataService,
             Workspace = workspace,
             MainContent = workspaceViews.MainContent,
@@ -101,6 +101,14 @@ public partial class App : Application
             StageCommands.Register(registry, workspaceViews.Stage, world, workspaceViews.Battle);
             WeaponCommands.Register(registry, weapons);
             BattleCommands.Register(registry, workspaceViews.Battle, workspaceViews.BattleWorld, battleConfig);
+            // v3.1:对战区自定义命令族(设置窗只是它们的图形外壳)
+            ArenaConfigCommands.Register(
+                registry,
+                workspaceViews.Battle,
+                workspaceViews.BattleWorld,
+                battleConfig,
+                weapons,
+                workspaceViews.Stage);
             DirectorCommands.Register(
                 registry,
                 workspaceViews.Director,
@@ -288,6 +296,8 @@ public partial class App : Application
                     { "type": "button", "label": "录制状态", "command": "record.status" },
                     { "type": "label", "id": "mlbl", "label": "更多", "default": "低频操作走控制台" },
                     { "type": "button", "label": "炮台一览", "command": "turret.list" },
+                    { "type": "button", "label": "对战区设置", "command": "win.show name=arenaset" },
+                    { "type": "button", "label": "对战区一览", "command": "arena.config" },
                     { "type": "button", "label": "编辑工具", "command": "panel.show id=editor" },
                     { "type": "button", "label": "调试窗", "command": "win.show name=objdebug" }
                   ]
