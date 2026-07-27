@@ -207,6 +207,7 @@ public sealed class ScenarioStore
         BarrelRpm = x.BarrelRpm,
     };
 
+    /// <summary>v3.1 AC-04:逐字段克隆(含 v2.12.4 遗漏的 SuddenDeathAtSeconds 与 v3.1 全部新字段)。</summary>
     private static ArenaLayoutConfig CloneArena(ArenaLayoutConfig x) => new()
     {
         Name = x.Name,
@@ -220,6 +221,30 @@ public sealed class ScenarioStore
         ProjectileLifetimeSec = x.ProjectileLifetimeSec,
         Mode = x.Mode,
         CellSize = x.CellSize,
+        SuddenDeathAtSeconds = x.SuddenDeathAtSeconds,
+        TurretMarginXRatio = x.TurretMarginXRatio,
+        TurretMarginYRatio = x.TurretMarginYRatio,
+        ShieldRingScale = x.ShieldRingScale,
+        ShieldCostPerValue = x.ShieldCostPerValue,
+        ProjectileSpeedScale = x.ProjectileSpeedScale,
+        ShellSizeCellFactor = x.ShellSizeCellFactor,
+        ShellSizeValueExponent = x.ShellSizeValueExponent,
+        ShellSizeMinCells = x.ShellSizeMinCells,
+        ShellSizeMaxCells = x.ShellSizeMaxCells,
+        ShellSpeedJitter = x.ShellSpeedJitter,
+        ShellSpeedValueExponent = x.ShellSpeedValueExponent,
+        ShellSpeedMin = x.ShellSpeedMin,
+        ShellSpeedMax = x.ShellSpeedMax,
+        ShellWeightScale = x.ShellWeightScale,
+        InitialShellCount = x.InitialShellCount,
+        InitialShellValue = x.InitialShellValue,
+        InitialShellWeapon = x.InitialShellWeapon,
+        SmallBallSpeed = x.SmallBallSpeed,
+        SmallBallSizeCellFactor = x.SmallBallSizeCellFactor,
+        ShellLabelFontFactor = x.ShellLabelFontFactor,
+        ShellLabelFontMin = x.ShellLabelFontMin,
+        ShellLabelFontMax = x.ShellLabelFontMax,
+        ShellLabelOutsideOpacity = x.ShellLabelOutsideOpacity,
     };
 
     private static WeaponDefinition CloneWeapon(WeaponDefinition x) => new()

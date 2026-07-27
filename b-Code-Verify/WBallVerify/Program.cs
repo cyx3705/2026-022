@@ -58,6 +58,9 @@ Console.WriteLine($"total faction points after 60s: {pts}");
 Console.WriteLine(fp);
 Console.WriteLine($"same-seed hash equal: {hashA == hashB}");
 Console.WriteLine($"diff-seed hash differs: {hashA != hashC}");
+// v3.1:哈希基线留档 — 未改任何设置时必须与文档附录留档值一致
+Console.WriteLine($"hash seed=42 @60s: {hashA}");
+Console.WriteLine($"hash seed=43 @60s: {hashC}");
 
 // v2.12.4:整局打到终局,验证触杀/余烬爆发/胜负收敛
 bool RunToEnd(int seed, int maxFrames, out double endSeconds, out string winner)

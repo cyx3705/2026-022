@@ -81,6 +81,35 @@ public sealed class BattleRuntime
     public bool SuddenDeath =>
         TerritoryMode && ElapsedSeconds >= Math.Max(0, _config.Arena.SuddenDeathAtSeconds);
 
+    /// <summary>v3.1:护罩环半径倍率 — 判定与渲染共读(单一真相)。</summary>
+    public double ShieldRingScale => _config.Arena.ShieldRingScale;
+
+    /// <summary>v3.1:护盾计价(一点弹体积分 = 多少护盾)。</summary>
+    public double ShieldCostPerValue => _config.Arena.ShieldCostPerValue;
+
+    /// <summary>v3.1 Q4:弹体积分数字的字号/暗淡参数(渲染读)。</summary>
+    public (double Factor, double Min, double Max, double OutsideOpacity) ShellLabelStyle => (
+        _config.Arena.ShellLabelFontFactor,
+        _config.Arena.ShellLabelFontMin,
+        _config.Arena.ShellLabelFontMax,
+        _config.Arena.ShellLabelOutsideOpacity);
+
+    /// <summary>v3.1:弹体尺寸映射 — 出膛/研磨/余烬三处共用 ArenaFormulas 同一公式。</summary>
+    public double ShellSizeFor(double value) =>
+        ArenaFormulas.ShellSize(_config.Arena, _cellSize, value);
+
+    /// <summary>v3.1:弹体质量映射(动量 = 质量 × 速度)。</summary>
+    public double ShellWeightFor(double value) =>
+        ArenaFormulas.ShellWeight(_config.Arena, value);
+
+    /// <summary>v3.1:大球出膛速度映射;jitter01 ∈ [0,1) 由确定性随机源给出。</summary>
+    public double ShellSpeedFor(double weaponSpeed, double value, double jitter01) =>
+        ArenaFormulas.ShellSpeed(_config.Arena, weaponSpeed, value, jitter01);
+
+    /// <summary>v3.1:当前配置的派生值(设置窗与 arena.config 共用)。</summary>
+    public ArenaMetrics Metrics(WeaponCatalog? weapons = null) =>
+        ArenaMetrics.Compute(_config.Arena, _config.Turrets, weapons ?? _weapons);
+
     /// <summary>v2.12.3 NB-02:总弹药 = 小球池 + 大球队列数值和。</summary>
     public long AmmoTotalOf(Faction turret) =>
         turret.SmallAmmo + turret.Ammo.Sum(shell => shell.Value);
@@ -123,11 +152,15 @@ public sealed class BattleRuntime
             PlaceTurret(turret);
             _economyWorld.Factions.Add(turret);
             _fireCooldown[turret.Id] = 0;
-            // v2.10 AM-04:开局预载,避免弹药未产出前冷场
+            // v2.10 AM-04:开局预载,避免弹药未产出前冷场;v3.1:发数/数值/武器可配
             if (TerritoryMode)
             {
-                for (var i = 0; i < 12; i++)
-                    turret.Ammo.Enqueue(new AmmoShell(1, "直射"));
+                var preloadValue = Math.Max(1, _config.Arena.InitialShellValue);
+                var preloadWeapon = string.IsNullOrWhiteSpace(_config.Arena.InitialShellWeapon)
+                    ? "直射"
+                    : _config.Arena.InitialShellWeapon.Trim();
+                for (var i = 0; i < Math.Max(0, _config.Arena.InitialShellCount); i++)
+                    turret.Ammo.Enqueue(new AmmoShell(preloadValue, preloadWeapon));
             }
         }
         _economyWorld.Seed = seed;
@@ -141,7 +174,7 @@ public sealed class BattleRuntime
     private void InitTerritory()
     {
         var turrets = Turrets;
-        _cellSize = Math.Clamp(_config.Arena.CellSize, 5, 100);
+        _cellSize = ArenaFormulas.CellSize(_config.Arena);
         TerritoryCols = Math.Max(1, (int)Math.Ceiling(_battleWorld.WorldWidth / _cellSize));
         TerritoryRows = Math.Max(1, (int)Math.Ceiling(_battleWorld.WorldHeight / _cellSize));
         _territory = new int[TerritoryCols * TerritoryRows];
@@ -342,13 +375,9 @@ public sealed class BattleRuntime
             weapon = ResolveFireWeapon(turret, null);
 
         var value = Math.Max(1, shell.Value);
-        var size = Math.Clamp(_cellSize * 0.5 * Math.Pow(value, 0.25), _cellSize * 0.5, _cellSize * 5);
-        // v2.11 MO-02:发射动量适度随机(±25%),重弹略慢
-        var jitter = 0.75 + _battleWorld.Rng.NextDouble() * 0.5;
-        var speed = Math.Clamp(
-            Math.Clamp(weapon.Speed, 80, 1200) * jitter / Math.Pow(value, 0.12),
-            60,
-            700);
+        var size = ShellSizeFor(value);
+        // v2.11 MO-02:发射动量适度随机(默认 ±25%),重弹略慢;v3.1:映射参数可配
+        var speed = ShellSpeedFor(weapon.Speed, value, _battleWorld.Rng.NextDouble());
         var angle = direction + (_battleWorld.Rng.NextDouble() - 0.5) * weapon.SpreadDegrees * Math.PI / 180;
         var startDistance = turret.TurretRadius + size + 3;
         _battleWorld.Balls.Add(new Ball
@@ -361,7 +390,7 @@ public sealed class BattleRuntime
             Color = turret.Color,
             Size = size,
             // v2.11 MO-01:质量=数值,动量碰撞下大弹推小弹
-            Weight = Math.Max(1, value),
+            Weight = ShellWeightFor(value),
             Projectile = new ProjectileState
             {
                 OwnerFactionId = turret.Id,
@@ -425,8 +454,8 @@ public sealed class BattleRuntime
 
     private void SpawnSmallBall(Faction turret, double angle)
     {
-        var size = _cellSize * 0.5;
-        const double speed = 380;
+        var size = ArenaFormulas.SmallBallSize(_config.Arena, _cellSize);
+        var speed = ArenaFormulas.SmallBallSpeed(_config.Arena);
         var startDistance = turret.TurretRadius + size + 3;
         _battleWorld.Balls.Add(new Ball
         {
@@ -540,7 +569,7 @@ public sealed class BattleRuntime
         {
             var angle = _battleWorld.Rng.NextDouble() * Math.PI * 2;
             var speed = 150 + _battleWorld.Rng.NextDouble() * 250;
-            var size = Math.Clamp(_cellSize * 0.5 * Math.Pow(value, 0.25), _cellSize * 0.5, _cellSize * 5);
+            var size = ShellSizeFor(value);
             _battleWorld.Balls.Add(new Ball
             {
                 Id = _battleWorld.NextBallId(),
@@ -550,7 +579,7 @@ public sealed class BattleRuntime
                 Vy = Math.Sin(angle) * speed,
                 Color = turret.Color,
                 Size = size,
-                Weight = Math.Max(1, value),
+                Weight = ShellWeightFor(value),
                 Projectile = new ProjectileState
                 {
                     OwnerFactionId = turret.Id,
@@ -598,6 +627,34 @@ public sealed class BattleRuntime
         if (rpm is not null) turret.BarrelRpm = Math.Clamp(rpm.Value, 0.5, 60);
         _economyWorld.NotifyChanged(markDirty: false);
         return turret;
+    }
+
+    /// <summary>
+    /// v3.1 turret.setall:把配置定义里的数值刷到运行时炮台(不重置战场)。
+    /// 领地模式下 Hp/MaxHp = 占格数由领地系统维护,此处不动,只有 direct 模式才刷生命。
+    /// </summary>
+    public void SyncTurretNumbersFromConfig()
+    {
+        foreach (var definition in _config.Turrets)
+        {
+            var turret = Turrets.FirstOrDefault(x =>
+                x.Id.Equals(definition.Id, StringComparison.OrdinalIgnoreCase));
+            if (turret == null)
+                continue;
+
+            turret.MaxShield = Math.Max(0, definition.MaxShield);
+            turret.Shield = Math.Clamp(definition.InitialShield, 0, turret.MaxShield);
+            turret.Firepower.ProjectileSize = Math.Clamp(definition.ProjectileSize, 2, 60);
+            turret.Firepower.ProjectileCount = Math.Clamp(definition.ProjectileCount, 1, 200);
+            turret.Firepower.FireIntervalSec = Math.Clamp(definition.FireIntervalSec, 0.05, 60);
+            turret.BarrelRpm = Math.Clamp(definition.BarrelRpm, 0.5, 60);
+            if (!TerritoryMode)
+            {
+                turret.MaxHp = Math.Max(1, definition.MaxHp);
+                turret.Hp = turret.MaxHp;
+            }
+        }
+        _economyWorld.NotifyChanged(markDirty: false);
     }
 
     public Faction FindRequired(string id) =>
@@ -676,9 +733,9 @@ public sealed class BattleRuntime
 
     private void PlaceTurret(Faction turret)
     {
-        // 更靠四角(参考图风格)
-        var marginX = _battleWorld.WorldWidth * 0.12;
-        var marginY = _battleWorld.WorldHeight * 0.14;
+        // 更靠四角(参考图风格);v3.1:离角比例可配
+        var marginX = _battleWorld.WorldWidth * _config.Arena.TurretMarginXRatio;
+        var marginY = _battleWorld.WorldHeight * _config.Arena.TurretMarginYRatio;
         (turret.TurretX, turret.TurretY) = turret.Quadrant switch
         {
             1 => (_battleWorld.WorldWidth - marginX, marginY),
@@ -884,20 +941,21 @@ public sealed class BattleRuntime
     private void SyncShellSize(Ball ball)
     {
         var value = Math.Max(1, ball.Projectile?.CapturesLeft ?? 1);
-        ball.Size = Math.Clamp(_cellSize * 0.5 * Math.Pow(value, 0.25), _cellSize * 0.5, _cellSize * 5);
-        ball.Weight = Math.Max(1, value);
+        ball.Size = ShellSizeFor(value);
+        ball.Weight = ShellWeightFor(value);
     }
 
     /// <summary>v2.12 SH-01~04:实体护罩 — 小球湮灭磨盾,大球按比例抵消并反弹。返回 true 表示本弹已处理完毕(消失或反弹)。</summary>
     private bool TryShieldIntercept(Ball ball, ProjectileState projectile)
     {
-        const double costPerValue = 50_000;
+        var costPerValue = _config.Arena.ShieldCostPerValue; // v3.1:护盾计价可配
         foreach (var turret in Turrets)
         {
             if (!turret.Alive || turret.Shield <= 0)
                 continue;
 
-            var shieldRadius = turret.TurretRadius * 1.55; // 与外圈护盾环视觉一致
+            // v3.1:与外圈护盾环视觉共读同一字段,杜绝两处漂移
+            var shieldRadius = turret.TurretRadius * _config.Arena.ShieldRingScale;
             var reach = shieldRadius + ball.Size;
             var distSq = DistanceSquared(ball.X, ball.Y, turret.TurretX, turret.TurretY);
             if (distSq > reach * reach)
