@@ -35,52 +35,113 @@ internal static class MediaFoundationEncoder
         if (frames.Count == 0)
             throw new InvalidOperationException("无帧可编码");
 
-        Check(MFStartup(MfVersion, 0), "MFStartup");
-        IMFAttributes? attrs = null;
-        IMFSinkWriter? writer = null;
-        IMFMediaType? outType = null;
-        IMFMediaType? inType = null;
-        try
+        using var writer = Open(mp4Path, fps, width, height, log);
+        foreach (var frame in frames)
+            writer.WriteFrame(frame);
+        writer.Complete();
+    }
+
+    public static FrameWriter Open(string mp4Path, int fps, int width, int height, IShellLog log) =>
+        new(mp4Path, fps, width, height, log);
+
+    internal sealed class FrameWriter : IDisposable
+    {
+        private readonly string _path;
+        private readonly int _fps;
+        private readonly int _width;
+        private readonly int _height;
+        private readonly IShellLog _log;
+        private IMFAttributes? _attrs;
+        private IMFSinkWriter? _writer;
+        private IMFMediaType? _outType;
+        private IMFMediaType? _inType;
+        private int _stream;
+        private long _frameIndex;
+        private bool _complete;
+        private bool _disposed;
+
+        internal FrameWriter(string path, int fps, int width, int height, IShellLog log)
         {
-            Check(MFCreateAttributes(out attrs, 2), "MFCreateAttributes");
-            Check(attrs!.SetGUID(TranscodeContainerType, ContainerMpeg4), "SetGUID(container)");
-            Check(MFCreateSinkWriterFromURL(mp4Path, IntPtr.Zero, attrs, out writer), "CreateSinkWriter");
-
-            Check(MFCreateMediaType(out outType), "CreateMediaType(out)");
-            Check(outType!.SetGUID(AttrMajorType, MajorTypeVideo), "out major");
-            Check(outType.SetGUID(AttrSubtype, SubtypeH264), "out subtype");
-            Check(outType.SetUINT32(AttrBitrate, Math.Clamp(width * height * fps / 8, 1_000_000, 16_000_000)), "bitrate");
-            Check(outType.SetUINT32(AttrInterlace, 2), "interlace");
-            Check(outType.SetUINT64(AttrFrameSize, Pack(width, height)), "framesize");
-            Check(outType.SetUINT64(AttrFrameRate, Pack(fps, 1)), "framerate");
-            Check(outType.SetUINT64(AttrPixelAspect, Pack(1, 1)), "par");
-            Check(writer!.AddStream(outType, out var stream), "AddStream");
-
-            Check(MFCreateMediaType(out inType), "CreateMediaType(in)");
-            Check(inType!.SetGUID(AttrMajorType, MajorTypeVideo), "in major");
-            Check(inType.SetGUID(AttrSubtype, SubtypeRgb32), "in subtype");
-            Check(inType.SetUINT32(AttrInterlace, 2), "in interlace");
-            Check(inType.SetUINT64(AttrFrameSize, Pack(width, height)), "in framesize");
-            Check(inType.SetUINT64(AttrFrameRate, Pack(fps, 1)), "in framerate");
-            Check(inType.SetUINT64(AttrPixelAspect, Pack(1, 1)), "in par");
-            Check(inType.SetUINT32(AttrStride, width * 4), "stride");
-            Check(writer.SetInputMediaType(stream, inType, null), "SetInputMediaType");
-            Check(writer.BeginWriting(), "BeginWriting");
-
-            var duration = 10_000_000L / Math.Max(1, fps);
-            for (var i = 0; i < frames.Count; i++)
-                WriteSample(writer, stream, frames[i], width, height, i * duration, duration);
-
-            Check(writer.Finalize(), "Finalize");
-            log.Info("record", $"MF MP4 完成 {mp4Path} frames={frames.Count}");
+            _path = path;
+            _fps = Math.Clamp(fps, 1, 120);
+            _width = width;
+            _height = height;
+            _log = log;
+            Initialize();
         }
-        finally
+
+        public long FramesWritten => _frameIndex;
+
+        public void WriteFrame(byte[] bgra)
         {
-            Release(inType);
-            Release(outType);
-            Release(writer);
-            Release(attrs);
+            ObjectDisposedException.ThrowIf(_disposed, this);
+            if (_complete)
+                throw new InvalidOperationException("编码器已经完成");
+            if (bgra.Length != _width * _height * 4)
+                throw new ArgumentException("BGRA 帧尺寸不匹配", nameof(bgra));
+            var time = _frameIndex * 10_000_000L / _fps;
+            var next = (_frameIndex + 1) * 10_000_000L / _fps;
+            WriteSample(_writer!, _stream, bgra, _width, _height, time, next - time);
+            _frameIndex++;
+        }
+
+        public void Complete()
+        {
+            ObjectDisposedException.ThrowIf(_disposed, this);
+            if (_complete)
+                return;
+            Check(_writer!.Finalize(), "Finalize");
+            _complete = true;
+            _log.Info("render", $"MF MP4 完成 {_path} frames={_frameIndex}");
+        }
+
+        public void Dispose()
+        {
+            if (_disposed)
+                return;
+            _disposed = true;
+            Release(_inType);
+            Release(_outType);
+            Release(_writer);
+            Release(_attrs);
             MFShutdown();
+        }
+
+        private void Initialize()
+        {
+            Check(MFStartup(MfVersion, 0), "MFStartup");
+            try
+            {
+                Check(MFCreateAttributes(out _attrs, 2), "MFCreateAttributes");
+                Check(_attrs!.SetGUID(TranscodeContainerType, ContainerMpeg4), "SetGUID(container)");
+                Check(MFCreateSinkWriterFromURL(_path, IntPtr.Zero, _attrs, out _writer), "CreateSinkWriter");
+
+                Check(MFCreateMediaType(out _outType), "CreateMediaType(out)");
+                Check(_outType!.SetGUID(AttrMajorType, MajorTypeVideo), "out major");
+                Check(_outType.SetGUID(AttrSubtype, SubtypeH264), "out subtype");
+                Check(_outType.SetUINT32(AttrBitrate, Math.Clamp(_width * _height * _fps / 8, 1_000_000, 16_000_000)), "bitrate");
+                Check(_outType.SetUINT32(AttrInterlace, 2), "interlace");
+                Check(_outType.SetUINT64(AttrFrameSize, Pack(_width, _height)), "framesize");
+                Check(_outType.SetUINT64(AttrFrameRate, Pack(_fps, 1)), "framerate");
+                Check(_outType.SetUINT64(AttrPixelAspect, Pack(1, 1)), "par");
+                Check(_writer!.AddStream(_outType, out _stream), "AddStream");
+
+                Check(MFCreateMediaType(out _inType), "CreateMediaType(in)");
+                Check(_inType!.SetGUID(AttrMajorType, MajorTypeVideo), "in major");
+                Check(_inType.SetGUID(AttrSubtype, SubtypeRgb32), "in subtype");
+                Check(_inType.SetUINT32(AttrInterlace, 2), "in interlace");
+                Check(_inType.SetUINT64(AttrFrameSize, Pack(_width, _height)), "in framesize");
+                Check(_inType.SetUINT64(AttrFrameRate, Pack(_fps, 1)), "in framerate");
+                Check(_inType.SetUINT64(AttrPixelAspect, Pack(1, 1)), "in par");
+                Check(_inType.SetUINT32(AttrStride, _width * 4), "stride");
+                Check(_writer.SetInputMediaType(_stream, _inType, null), "SetInputMediaType");
+                Check(_writer.BeginWriting(), "BeginWriting");
+            }
+            catch
+            {
+                Dispose();
+                throw;
+            }
         }
     }
 

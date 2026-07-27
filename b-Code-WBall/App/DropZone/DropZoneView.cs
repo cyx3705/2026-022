@@ -56,8 +56,14 @@ public sealed class DropZoneView : FrameworkElement, ICommandBusAware
     private const double RotateOffset = 28;
 
     private static readonly Typeface LabelTypeface = new("Segoe UI Semibold");
-    private static readonly Dictionary<(string Label, int FontPx), (FormattedText Fg, FormattedText Outline)> LabelCache = new();
-    private static readonly Dictionary<string, SolidColorBrush> BrushCache = new(StringComparer.OrdinalIgnoreCase);
+    [ThreadStatic]
+    private static Dictionary<(string Label, int FontPx), (FormattedText Fg, FormattedText Outline)>? _labelCache;
+    [ThreadStatic]
+    private static Dictionary<string, SolidColorBrush>? _brushCache;
+    private static Dictionary<(string Label, int FontPx), (FormattedText Fg, FormattedText Outline)> LabelCache =>
+        _labelCache ??= new();
+    private static Dictionary<string, SolidColorBrush> BrushCache =>
+        _brushCache ??= new(StringComparer.OrdinalIgnoreCase);
     private static readonly SolidColorBrush LabelOutlineBrush;
 
     static DropZoneView()

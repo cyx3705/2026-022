@@ -67,7 +67,7 @@ public static class StageCommands
                     economyWorld.IsPlaying = true;
                     battle.AutomaticFire = true;
                 }
-                // record: 由 record.start 驱动导演,不自动开火空转
+                // record 只保留兼容展示态；独立出片任务不再驱动现场导演。
                 return CommandResult.Ok(stage.ToString());
             }),
         });

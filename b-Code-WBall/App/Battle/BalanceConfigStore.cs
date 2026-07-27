@@ -30,6 +30,12 @@ public sealed class BalanceConfig
     public double HaloReachFactor { get; set; } = 1.6;
     public double GrindRatePerSecond { get; set; } = 2;
     public bool MergeSameOwnerSmall { get; set; } = true;
+    public bool FriendlyAssistEnabled { get; set; } = true;
+    public bool FriendlyAssistVisualEnabled { get; set; } = true;
+    public double FriendlyAbsorbSmallRate { get; set; } = 0.25;
+    public double FriendlyShellTransferRate { get; set; } = 0.10;
+    public double FriendlyAssistReachFactor { get; set; } = 1.20;
+    public int FriendlyAssistMaxValue { get; set; } = 100_000;
 
     public bool ShieldBreakthrough { get; set; } = true;
     public bool ContactKillEnabled { get; set; } = true;
@@ -92,6 +98,10 @@ public sealed class BalanceConfigStore
             ["smallPackMax"] = (2, 4096),
             ["haloReachFactor"] = (1, 4),
             ["grindRatePerSecond"] = (0.1, 50),
+            ["friendlyAbsorbSmallRate"] = (0, 10),
+            ["friendlyShellTransferRate"] = (0, 10),
+            ["friendlyAssistReachFactor"] = (1, 3),
+            ["friendlyAssistMaxValue"] = (2, 1_000_000),
             ["shieldSlotGainPerValue"] = (0, 1_000_000),
             ["shieldRegenPerSecond"] = (0, 1_000_000),
             ["emberSpeedMin"] = (10, 3000),
@@ -155,10 +165,16 @@ public sealed class BalanceConfigStore
             File.WriteAllText(_path, JsonSerializer.Serialize(new BalanceConfig(), JsonOptions));
         try
         {
-            var config = JsonSerializer.Deserialize<BalanceConfig>(File.ReadAllText(_path), JsonOptions)
+            var json = File.ReadAllText(_path);
+            var config = JsonSerializer.Deserialize<BalanceConfig>(json, JsonOptions)
                          ?? new BalanceConfig();
+            using var document = JsonDocument.Parse(json);
+            if (!document.RootElement.TryGetProperty("friendlyAssistEnabled", out _)
+                && !document.RootElement.TryGetProperty("FriendlyAssistEnabled", out _))
+                config.FriendlyAssistEnabled = config.MergeSameOwnerSmall;
             Validate(config);
             Current = config;
+            Save();
             _log.Info("balance", $"已加载战斗平衡配置 {_path}");
         }
         catch (Exception ex)
@@ -215,6 +231,12 @@ public sealed class BalanceConfigStore
         HaloReachFactor = source.HaloReachFactor,
         GrindRatePerSecond = source.GrindRatePerSecond,
         MergeSameOwnerSmall = source.MergeSameOwnerSmall,
+        FriendlyAssistEnabled = source.FriendlyAssistEnabled,
+        FriendlyAssistVisualEnabled = source.FriendlyAssistVisualEnabled,
+        FriendlyAbsorbSmallRate = source.FriendlyAbsorbSmallRate,
+        FriendlyShellTransferRate = source.FriendlyShellTransferRate,
+        FriendlyAssistReachFactor = source.FriendlyAssistReachFactor,
+        FriendlyAssistMaxValue = source.FriendlyAssistMaxValue,
         ShieldBreakthrough = source.ShieldBreakthrough,
         ContactKillEnabled = source.ContactKillEnabled,
         SelfShieldRefundEnabled = source.SelfShieldRefundEnabled,

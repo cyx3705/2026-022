@@ -10,6 +10,7 @@ using WBall.Game;
 using WBall.Model;
 using WBall.Presentation;
 using WBall.Recording;
+using WBall.Stage;
 
 namespace AppShell.App;
 
@@ -18,6 +19,7 @@ public partial class App : Application
 {
     private ShellLog? _log;
     private WBallDataService? _data;
+    private RenderJobService? _renderJobs;
 
     protected override void OnStartup(StartupEventArgs e)
     {
@@ -72,24 +74,25 @@ public partial class App : Application
         var scenarios = new ScenarioStore(workspace.Root, log);
         var presets = new PresetStore(paths.Root, log);
         var simulator = new BalanceSimulator(world, battleConfig, weapons, log);
+        var renderTime = new RenderTimeConfigStore(paths.Root, log);
 
         var projection = new PropertyProjection(sqlite, world, paths.Root);
         var dataService = new WBallDataService(sqlite, projection);
         _data = dataService;
 
+        var stageState = new StageState();
+        var renderJobs = new RenderJobService(
+            world, battleConfig, balanceConfig, weapons, stageState, scenarios, renderTime,
+            paths.Root, workspace.Root, log);
+        _renderJobs = renderJobs;
         var workspaceViews = new WBallWorkspaceViews(
-            world, log, paths.Root, battleConfig, balanceConfig, presets, weapons, economyBridge);
-        var recorder = new StageRecorder(
-            workspaceViews.StageView,
-            workspaceViews.Stage,
-            workspaceViews.Director,
-            workspace.Root,
-            log);
+            world, log, paths.Root, battleConfig, balanceConfig, presets, weapons, economyBridge,
+            renderTime, stageState, renderJobs);
 
         var config = new ShellConfig
         {
             AppName = "WBall",
-            AppVersion = "3.2.0",
+            AppVersion = "3.3.0",
             DataService = dataService,
             Workspace = workspace,
             MainContent = workspaceViews.MainContent,
@@ -151,7 +154,7 @@ public partial class App : Application
                 workspaceViews.Director,
                 world,
                 log);
-            RecordCommands.Register(registry, recorder, workspaceViews.Stage);
+            RecordCommands.Register(registry, renderJobs, workspaceViews.StageView.ApplyTimeConfig);
         };
 
         var window = new ShellWindow(config, new FileLayoutStore(paths), log, settings, paths.Root);
@@ -240,6 +243,7 @@ public partial class App : Application
 
     protected override void OnExit(ExitEventArgs e)
     {
+        _renderJobs?.Dispose();
         _data?.Dispose();
         _log?.Dispose();
         base.OnExit(e);
@@ -304,11 +308,11 @@ public partial class App : Application
                     { "type": "button", "label": "继续", "command": "battle.resume" },
                     { "type": "button", "label": "重开(回编辑)", "command": "battle.reset", "style": "danger" },
                     { "type": "button", "label": "对战状态", "command": "battle.status" },
-                    { "type": "label", "id": "rlbl", "label": "录制", "default": "MP4(不可用时 PNG 帧)" },
+                    { "type": "label", "id": "rlbl", "label": "出片", "default": "独立计算画面帧,不录屏" },
                     { "type": "number", "id": "recsec", "label": "时长(s)", "min": 5, "max": 600, "step": 5, "default": "60" },
-                    { "type": "button", "label": "开始录制", "command": "record.start seconds={recsec}" },
-                    { "type": "button", "label": "停止录制", "command": "record.stop" },
-                    { "type": "button", "label": "录制状态", "command": "record.status" },
+                    { "type": "button", "label": "开始出片", "command": "render.start mode=output seconds={recsec}" },
+                    { "type": "button", "label": "出片与时间", "command": "win.show name=render" },
+                    { "type": "button", "label": "出片状态", "command": "render.status" },
                     { "type": "label", "id": "mlbl", "label": "更多", "default": "低频操作走控制台" },
                     { "type": "button", "label": "炮台一览", "command": "turret.list" },
                     { "type": "button", "label": "对战区设置", "command": "win.show name=arenaset" },

@@ -206,7 +206,15 @@ public sealed class BattleDirector
                      .ThenBy(x => x.Y))
         {
             builder.Append(ball.Projectile?.OwnerFactionId).Append(':').Append(Round(ball.X)).Append(':').Append(Round(ball.Y))
-                .Append(':').Append(Round(ball.Vx)).Append(':').Append(Round(ball.Vy)).Append('|');
+                .Append(':').Append(Round(ball.Vx)).Append(':').Append(Round(ball.Vy));
+            if (_balance.Current.FriendlyAssistEnabled && ball.Projectile is { } projectile)
+            {
+                builder.Append(':').Append(projectile.Role)
+                    .Append(':').Append(projectile.CapturesLeft)
+                    .Append(':').Append(Round(projectile.FriendlySmallCarry))
+                    .Append(':').Append(Round(projectile.FriendlyShellCarry));
+            }
+            builder.Append('|');
         }
         foreach (var ball in _economyWorld.Balls
                      .OrderBy(x => x.Color, StringComparer.Ordinal)

@@ -75,7 +75,15 @@ internal sealed class BalanceSettingsView : UserControl, ICommandBusAware
         [
             new("HaloReachFactor", "halo", "光晕范围系数", "即时 / territory"),
             new("GrindRatePerSecond", "grind", "研磨速率", "即时 / territory"),
-            new("MergeSameOwnerSmall", "merge", "同色小球融入", "即时 / territory", true),
+        ]),
+        new("同阵营助力与回收", "balance.assist",
+        [
+            new("FriendlyAssistEnabled", "enabled", "启用低速助力", "即时 / territory", true),
+            new("FriendlyAssistVisualEnabled", "visual", "显示助力连线", "即时 / 纯视觉", true),
+            new("FriendlyAbsorbSmallRate", "smallRate", "大球吸收小球(点/秒)", "即时 / 低速机制"),
+            new("FriendlyShellTransferRate", "shellRate", "大球之间助力(点/秒)", "即时 / 低速机制"),
+            new("FriendlyAssistReachFactor", "reach", "助力范围系数", "即时 / territory"),
+            new("FriendlyAssistMaxValue", "max", "单球积分上限", "即时 / territory"),
         ]),
         new("护罩与触杀", "balance.shield",
         [

@@ -8,6 +8,7 @@ using WBall.DropZone;
 using WBall.Game;
 using WBall.Model;
 using WBall.Stage;
+using WBall.Recording;
 
 namespace WBall.Presentation;
 
@@ -22,6 +23,7 @@ internal sealed class WBallWorkspaceViews
     private readonly RefereeView _referee;
     private readonly ArenaSettingsView _arenaSettings;
     private readonly BalanceSettingsView _balanceSettings;
+    private readonly RenderSettingsView _renderSettings;
     private readonly StageView _stageView;
     private readonly IReadOnlyList<ICommandBusAware> _commandViews;
 
@@ -33,7 +35,10 @@ internal sealed class WBallWorkspaceViews
         BalanceConfigStore balanceConfig,
         PresetStore presets,
         WeaponCatalog weapons,
-        EconomyBridge economyBridge)
+        EconomyBridge economyBridge,
+        RenderTimeConfigStore renderTime,
+        StageState stageState,
+        RenderJobService renderJobs)
     {
         _dropZone = new DropZoneView(world, log);
         _dropZone.AutoStepEnabled = false;
@@ -41,7 +46,7 @@ internal sealed class WBallWorkspaceViews
         _ball = new BallObjectView(world, dataRoot);
         _referee = new RefereeView(world);
 
-        Stage = new StageState();
+        Stage = stageState;
         BattleWorld = new SceneWorld
         {
             Defaults = world.Defaults,
@@ -54,16 +59,17 @@ internal sealed class WBallWorkspaceViews
         Battle = new BattleRuntime(world, BattleWorld, battleConfig, weapons, log, balanceConfig);
         Director = new BattleDirector(world, BattleWorld, Battle, weapons, economyBridge, Stage, log, balanceConfig);
         var arenaView = new ArenaView(BattleWorld, Battle);
-        _stageView = new StageView(Stage, world, BattleWorld, Director, _dropZone, arenaView, weapons);
+        _stageView = new StageView(Stage, world, BattleWorld, Director, _dropZone, arenaView, weapons, renderTime.Current);
         SyncAutoStep();
         Stage.Changed += SyncAutoStep;
         Director.StateChanged += SyncAutoStep;
 
         // v3.1:对战区设置窗(命令的图形外壳)
-        _arenaSettings = new ArenaSettingsView(battleConfig, Battle, weapons, Stage);
+        _arenaSettings = new ArenaSettingsView(battleConfig, balanceConfig, Battle, weapons, Stage);
         _balanceSettings = new BalanceSettingsView(balanceConfig, battleConfig, presets);
+        _renderSettings = new RenderSettingsView(renderJobs);
 
-        _commandViews = [_dropZone, _objectDebug, _ball, _referee, _arenaSettings, _balanceSettings];
+        _commandViews = [_dropZone, _objectDebug, _ball, _referee, _arenaSettings, _balanceSettings, _renderSettings];
         ToolWindows = CreateToolWindows();
     }
 
@@ -174,6 +180,16 @@ internal sealed class WBallWorkspaceViews
             DefaultRatio = 0.28,
             DefaultVisible = false,
             ContentFactory = () => _balanceSettings,
+        },
+        new()
+        {
+            Id = "render",
+            Title = "出片与时间",
+            DefaultSide = DockSide.Tab,
+            DefaultTabTarget = "balance",
+            DefaultRatio = 0.30,
+            DefaultVisible = false,
+            ContentFactory = () => _renderSettings,
         },
     ];
 }

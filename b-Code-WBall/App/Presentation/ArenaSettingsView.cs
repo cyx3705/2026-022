@@ -2,6 +2,7 @@ using System.Globalization;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
+using System.Windows.Threading;
 using AppShell.Core.Commands;
 using WBall.Battle;
 using WBall.Stage;
@@ -18,6 +19,7 @@ internal sealed class ArenaSettingsView : UserControl, ICommandBusAware
     private static readonly Brush SectionBrush = new SolidColorBrush(Color.FromRgb(0x1F, 0x6F, 0xEB));
 
     private readonly BattleConfigStore _config;
+    private readonly BalanceConfigStore _balance;
     private readonly BattleRuntime _battle;
     private readonly WeaponCatalog _weapons;
     private readonly StageState _stage;
@@ -29,6 +31,15 @@ internal sealed class ArenaSettingsView : UserControl, ICommandBusAware
     private readonly ComboBox _speedWeapon = new();
     private readonly ComboBox _sizePreset = new();
     private readonly CheckBox _ballCollision = new() { Content = "弹-弹碰撞" };
+    private readonly CheckBox _friendlyAssist = new() { Content = "启用低速助力" };
+    private readonly CheckBox _assistVisual = new() { Content = "显示助力连线" };
+    private readonly TextBlock _assistMetrics = new()
+    {
+        TextWrapping = TextWrapping.Wrap,
+        FontFamily = new FontFamily("Consolas"),
+        Foreground = HintBrush,
+    };
+    private readonly DispatcherTimer _assistTimer = new() { Interval = TimeSpan.FromSeconds(1) };
     private readonly TextBlock _preview = new() { TextWrapping = TextWrapping.Wrap, FontFamily = new FontFamily("Consolas") };
     private readonly TextBlock _status = new() { TextWrapping = TextWrapping.Wrap, Foreground = HintBrush };
     private readonly TextBox _scenarioName = new() { Text = "arena_custom", MinWidth = 110 };
@@ -37,11 +48,13 @@ internal sealed class ArenaSettingsView : UserControl, ICommandBusAware
 
     public ArenaSettingsView(
         BattleConfigStore config,
+        BalanceConfigStore balance,
         BattleRuntime battle,
         WeaponCatalog weapons,
         StageState stage)
     {
         _config = config;
+        _balance = balance;
         _battle = battle;
         _weapons = weapons;
         _stage = stage;
@@ -111,8 +124,15 @@ internal sealed class ArenaSettingsView : UserControl, ICommandBusAware
         root.Children.Add(Pair("数字字号系数 / 最小字号", "labelFactor", "labelMin", "小球缩小后数字不再无限小"));
         root.Children.Add(Pair("最大字号 / 超出暗淡", "labelMax", "labelOutside", "0=超出球体部分完全隐藏"));
 
-        // ⑥ 全局
-        root.Children.Add(Section("⑥ 全局", ""));
+        // ⑥ 同阵营助力
+        root.Children.Add(Section("⑥ 同阵营助力与回收", "即时 · 低速机制"));
+        root.Children.Add(Row("开关", _friendlyAssist, _assistVisual));
+        root.Children.Add(Pair("吸收小球 / 大球助力", "assistSmall", "assistShell", "点/秒;建议每次调整 0.05"));
+        root.Children.Add(Pair("助力范围 / 单球上限", "assistReach", "assistMax"));
+        root.Children.Add(_assistMetrics);
+
+        // ⑦ 全局
+        root.Children.Add(Section("⑦ 全局", ""));
         root.Children.Add(Pair("重力 g / 最大弹数", "gravity", "maxProj"));
         root.Children.Add(Row("碰撞", _ballCollision));
 
@@ -154,6 +174,9 @@ internal sealed class ArenaSettingsView : UserControl, ICommandBusAware
         };
 
         Reload();
+        _assistTimer.Tick += (_, _) => RefreshAssistMetrics();
+        Loaded += (_, _) => _assistTimer.Start();
+        Unloaded += (_, _) => _assistTimer.Stop();
     }
 
     public void AttachBus(CommandBus bus) => _bus = bus;
@@ -197,6 +220,13 @@ internal sealed class ArenaSettingsView : UserControl, ICommandBusAware
         Write("gravity", arena.GravityG);
         Write("maxProj", arena.MaxProjectiles);
         Write("scaleK", 1);
+        var assist = _balance.Current;
+        Write("assistSmall", assist.FriendlyAbsorbSmallRate);
+        Write("assistShell", assist.FriendlyShellTransferRate);
+        Write("assistReach", assist.FriendlyAssistReachFactor);
+        Write("assistMax", assist.FriendlyAssistMaxValue);
+        _friendlyAssist.IsChecked = assist.FriendlyAssistEnabled;
+        _assistVisual.IsChecked = assist.FriendlyAssistVisualEnabled;
 
         _mode.SelectedItem = _mode.Items.Cast<string>()
             .FirstOrDefault(x => x.Equals(arena.Mode?.Trim(), StringComparison.OrdinalIgnoreCase)) ?? "territory";
@@ -212,6 +242,7 @@ internal sealed class ArenaSettingsView : UserControl, ICommandBusAware
 
         _loading = false;
         RefreshPreview();
+        RefreshAssistMetrics();
     }
 
     private void RefreshPreview()
@@ -380,6 +411,23 @@ internal sealed class ArenaSettingsView : UserControl, ICommandBusAware
         if ((_ballCollision.IsChecked == true) != arena.BallCollision)
             commands.Add($"arena.collision on={(_ballCollision.IsChecked == true).ToString().ToLowerInvariant()}");
 
+        var assist = _balance.Current;
+        if ((_friendlyAssist.IsChecked == true) != assist.FriendlyAssistEnabled
+            || (_assistVisual.IsChecked == true) != assist.FriendlyAssistVisualEnabled
+            || Changed("assistSmall", assist.FriendlyAbsorbSmallRate)
+            || Changed("assistShell", assist.FriendlyShellTransferRate)
+            || Changed("assistReach", assist.FriendlyAssistReachFactor)
+            || Changed("assistMax", assist.FriendlyAssistMaxValue))
+        {
+            commands.Add(
+                $"balance.assist enabled={(_friendlyAssist.IsChecked == true).ToString().ToLowerInvariant()} "
+                + $"visual={(_assistVisual.IsChecked == true).ToString().ToLowerInvariant()} "
+                + $"smallRate={Read("assistSmall", assist.FriendlyAbsorbSmallRate).ToString("0.####", CultureInfo.InvariantCulture)} "
+                + $"shellRate={Read("assistShell", assist.FriendlyShellTransferRate).ToString("0.####", CultureInfo.InvariantCulture)} "
+                + $"reach={Read("assistReach", assist.FriendlyAssistReachFactor).ToString("0.####", CultureInfo.InvariantCulture)} "
+                + $"max={(int)Read("assistMax", assist.FriendlyAssistMaxValue)}");
+        }
+
         if (commands.Count == 0 && !reset)
         {
             Status("没有改动需要应用");
@@ -439,6 +487,13 @@ internal sealed class ArenaSettingsView : UserControl, ICommandBusAware
     {
         if (_speedWeapon.SelectedItem is string name && _weapons.TryResolve(name, out var weapon))
             Write("weaponSpeed", weapon.Speed);
+    }
+
+    private void RefreshAssistMetrics()
+    {
+        var status = _battle.FriendlyAssistStatus();
+        _assistMetrics.Text = $"在场 small={status.SmallShots} shell={status.Shells} ember={status.Embers} other={status.Others}\n"
+                              + $"最近1秒 小球转移={status.SmallTransferred} 大球转移={status.ShellTransferred} 回收={status.Reclaimed}";
     }
 
     // ── 控件构造小工具 ──────────────────────────────────────

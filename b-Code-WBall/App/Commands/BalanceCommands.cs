@@ -23,6 +23,7 @@ public static class BalanceCommands
         RegisterRate(registry, balanceStore);
         RegisterPack(registry, balanceStore, battle);
         RegisterDuel(registry, balanceStore);
+        RegisterAssist(registry, balanceStore, battle);
         RegisterShield(registry, balanceStore);
         RegisterEmber(registry, balanceStore);
         RegisterEconomy(registry, balanceStore);
@@ -113,10 +114,52 @@ public static class BalanceCommands
             {
                 var c = store.Current;
                 var changed = SetD(ctx, "halo", "haloReachFactor", x => c.HaloReachFactor = x)
-                              | SetD(ctx, "grind", "grindRatePerSecond", x => c.GrindRatePerSecond = x)
-                              | SetB(ctx, "merge", x => c.MergeSameOwnerSmall = x);
+                              | SetD(ctx, "grind", "grindRatePerSecond", x => c.GrindRatePerSecond = x);
+                if (ctx.Has("merge"))
+                {
+                    var enabled = ctx.GetBool("merge");
+                    c.MergeSameOwnerSmall = enabled;
+                    c.FriendlyAssistEnabled = enabled;
+                    changed = true;
+                }
                 if (changed) store.Save();
-                return CommandResult.Ok($"halo={N(c.HaloReachFactor)} grind={N(c.GrindRatePerSecond)} merge={B(c.MergeSameOwnerSmall)}");
+                return CommandResult.Ok($"halo={N(c.HaloReachFactor)} grind={N(c.GrindRatePerSecond)} merge={B(c.FriendlyAssistEnabled)} (兼容别名)");
+            }),
+        });
+    }
+
+    private static void RegisterAssist(CommandRegistry registry, BalanceConfigStore store, BattleRuntime battle)
+    {
+        registry.Register(new CommandDescriptor
+        {
+            Name = "balance.assist",
+            Summary = "查询或设置同阵营低速积分传递与升格小球回收",
+            Example = "balance.assist enabled=true visual=true smallRate=0.25 shellRate=0.10 reach=1.20 max=100000",
+            Parameters = Specs(("enabled", ParamType.Bool), ("smallRate", ParamType.Double),
+                ("shellRate", ParamType.Double), ("reach", ParamType.Double), ("max", ParamType.Int),
+                ("visual", ParamType.Bool)),
+            Handler = CommandDescriptor.Sync(ctx =>
+            {
+                var c = store.Current;
+                var changed = SetB(ctx, "enabled", x =>
+                              {
+                                  c.FriendlyAssistEnabled = x;
+                                  c.MergeSameOwnerSmall = x;
+                              })
+                              | SetB(ctx, "visual", x => c.FriendlyAssistVisualEnabled = x)
+                              | SetD(ctx, "smallRate", "friendlyAbsorbSmallRate", x => c.FriendlyAbsorbSmallRate = x)
+                              | SetD(ctx, "shellRate", "friendlyShellTransferRate", x => c.FriendlyShellTransferRate = x)
+                              | SetD(ctx, "reach", "friendlyAssistReachFactor", x => c.FriendlyAssistReachFactor = x)
+                              | SetI(ctx, "max", "friendlyAssistMaxValue", x => c.FriendlyAssistMaxValue = x);
+                if (changed) store.Save();
+
+                var status = battle.FriendlyAssistStatus();
+                return CommandResult.Ok(
+                    $"enabled={B(c.FriendlyAssistEnabled)} visual={B(c.FriendlyAssistVisualEnabled)} smallRate={N(c.FriendlyAbsorbSmallRate)} "
+                    + $"shellRate={N(c.FriendlyShellTransferRate)} reach={N(c.FriendlyAssistReachFactor)} "
+                    + $"max={c.FriendlyAssistMaxValue} 60s上限=小球{N(c.FriendlyAbsorbSmallRate * 60)}/大球{N(c.FriendlyShellTransferRate * 60)}\n"
+                    + $"在场 small={status.SmallShots} shell={status.Shells} ember={status.Embers} other={status.Others}; "
+                    + $"最近1秒 小球转移={status.SmallTransferred} 大球转移={status.ShellTransferred} 回收={status.Reclaimed}");
             }),
         });
     }
@@ -430,7 +473,8 @@ public static class BalanceCommands
         {
             ("火力节奏", ["ShellIntervalAmmoFactor","ShellIntervalFloorSec","SmallRateBase","SmallRatePerAmmo","SmallRateMax","SmallRateFrozenFactor","SmallRateFrozenMax","SmallSpreadDeg","SmallSpreadFrozenDeg","VolleyRingCount","VolleyPendingMax","FreezeSecondsPerValue","FreezeMaxSeconds","AmmoQueueGuard"], "即时/territory"),
             ("升格梯度", ["SmallPackThreshold","SmallPackRatio","SmallPackMax","SmallPackSpeedFollowsSmall"], "即时/territory"),
-            ("对消融合", ["HaloReachFactor","GrindRatePerSecond","MergeSameOwnerSmall"], "即时/territory"),
+            ("对消研磨", ["HaloReachFactor","GrindRatePerSecond"], "即时/territory"),
+            ("同阵营助力", ["FriendlyAssistEnabled","FriendlyAssistVisualEnabled","FriendlyAbsorbSmallRate","FriendlyShellTransferRate","FriendlyAssistReachFactor","FriendlyAssistMaxValue"], "即时/territory"),
             ("护罩触杀", ["ShieldBreakthrough","ContactKillEnabled","SelfShieldRefundEnabled","SuddenDeathShieldBlock","ShieldSlotGainPerValue","ShieldRegenPerSecond"], "即时/两者"),
             ("余烬爆发", ["EmberSpeedMin","EmberSpeedMax","EmberFromAmmo","EmberDrainEconomy"], "即时/territory"),
             ("经济映射", ["IntensityExponent","SizeGainBase","BurstDamageGain","BurstSpreadGain","PierceDamageGain","GravitySizeGain","GravityDamageGain","ScoreDamageGain"], territory ? "当前 territory:仅部分生效" : "当前 direct:生效"),

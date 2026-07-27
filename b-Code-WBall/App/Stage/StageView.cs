@@ -5,6 +5,7 @@ using System.Windows.Threading;
 using WBall.Battle;
 using WBall.DropZone;
 using WBall.Model;
+using WBall.Recording;
 
 namespace WBall.Stage;
 
@@ -21,7 +22,7 @@ public sealed class StageView : Grid
     private readonly DispatcherTimer _timer;
     private readonly Grid _content;
     private DateTime _lastTick = DateTime.UtcNow;
-    private double _accumulator;
+    private TimelineClock _timeline;
 
     public StageView(
         StageState state,
@@ -30,12 +31,14 @@ public sealed class StageView : Grid
         BattleDirector director,
         DropZoneView economyView,
         ArenaView arenaView,
-        WeaponCatalog weapons)
+        WeaponCatalog weapons,
+        RenderTimeConfig renderTime)
     {
         _state = state;
         _economyWorld = economyWorld;
         _battleWorld = battleWorld;
         _director = director;
+        _timeline = new TimelineClock(renderTime, renderTime.PreviewAutoSlow);
         ClipToBounds = true;
 
         _economyHost = CreateHost(economyView, economyWorld);
@@ -65,6 +68,10 @@ public sealed class StageView : Grid
     }
 
     public StageHudView Hud => _hud;
+    public TimelineClock Timeline => _timeline;
+
+    public void ApplyTimeConfig(RenderTimeConfig config) =>
+        _timeline = new TimelineClock(config, config.PreviewAutoSlow);
 
     private void OnTick(object? sender, EventArgs e)
     {
@@ -73,22 +80,18 @@ public sealed class StageView : Grid
         _lastTick = now;
         if (_state.Mode is not (StageMode.Play or StageMode.Record))
         {
-            _accumulator = 0;
+            _timeline.Reset();
             return;
         }
 
-        // 录制由 record.start 同步推进;Play 才用 timer 驱动导演
+        // 出片任务使用自己的世界和线程；现场仅 Play 由 timer 驱动。
         if (_state.Mode == StageMode.Record)
             return;
 
-        const double fixedStep = 1.0 / 60.0;
-        _accumulator += elapsed;
-        var steps = 0;
-        while (_accumulator >= fixedStep && steps++ < 6)
-        {
+        var ballCount = _economyWorld.Balls.Count + _battleWorld.Balls.Count;
+        var steps = _timeline.AdvanceWallTime(elapsed, ballCount);
+        for (var index = 0; index < steps; index++)
             _director.AdvanceFixedStep();
-            _accumulator -= fixedStep;
-        }
     }
 
     private static Viewbox CreateHost(FrameworkElement content, SceneWorld world)

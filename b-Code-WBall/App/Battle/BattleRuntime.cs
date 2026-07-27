@@ -7,6 +7,31 @@ namespace WBall.Battle;
 
 public sealed record BattleEvent(double Time, string Kind, string Message, string? FactionId = null);
 
+public sealed record FriendlyAssistSnapshot(
+    int SmallShots,
+    int Shells,
+    int Embers,
+    int Others,
+    int SmallTransferred,
+    int ShellTransferred,
+    int Reclaimed);
+
+public sealed record AssistTransferVisual(
+    double FromX,
+    double FromY,
+    double ToX,
+    double ToY,
+    string Color,
+    int Amount,
+    double RemainingSeconds);
+
+public sealed record ProjectileValueLedger(
+    long FriendlyMoved,
+    long FriendlyPromotedSmallReclaimed,
+    long EnemyGround,
+    long TerritorySpent,
+    long ShieldSpent);
+
 /// <summary>命中标记(纯渲染消费:伤害飘字);同炮台短窗口内合并累计。</summary>
 public sealed class HitMarker
 {
@@ -29,11 +54,21 @@ public sealed class BattleRuntime
     private readonly Dictionary<string, double> _fireCooldown = new(StringComparer.OrdinalIgnoreCase);
     private readonly List<BattleEvent> _recentEvents = [];
     private readonly List<HitMarker> _hitMarkers = [];
+    private readonly List<AssistTransferVisual> _assistVisuals = [];
     private Func<WeaponDefinition, bool>? _isUnlocked;
     private string[] _territoryIds = [];
     private int[] _territory = [];
     private int[] _territoryOwned = [];
     private double _cellSize = 20;
+    private int _assistWindowSecond;
+    private int _assistSmallTransferred;
+    private int _assistShellTransferred;
+    private int _assistReclaimed;
+    private long _friendlyMovedTotal;
+    private long _friendlyPromotedSmallReclaimedTotal;
+    private long _enemyGroundTotal;
+    private long _territorySpentTotal;
+    private long _shieldSpentTotal;
 
     public BattleRuntime(
         SceneWorld economyWorld,
@@ -65,6 +100,26 @@ public sealed class BattleRuntime
     public int ProjectileCount => _battleWorld.Balls.Count(x => x.Projectile != null);
     public IReadOnlyList<BattleEvent> RecentEvents => _recentEvents;
     public IReadOnlyList<HitMarker> HitMarkers => _hitMarkers;
+    public IReadOnlyList<AssistTransferVisual> AssistVisuals => _assistVisuals;
+    public ProjectileValueLedger ValueLedger => new(
+        _friendlyMovedTotal, _friendlyPromotedSmallReclaimedTotal,
+        _enemyGroundTotal, _territorySpentTotal, _shieldSpentTotal);
+
+    public FriendlyAssistSnapshot FriendlyAssistStatus()
+    {
+        var roles = _battleWorld.Balls
+            .Where(x => x.Projectile != null)
+            .GroupBy(x => RoleOf(x.Projectile!))
+            .ToDictionary(x => x.Key, x => x.Count());
+        return new FriendlyAssistSnapshot(
+            roles.GetValueOrDefault(ProjectileRole.SmallShot),
+            roles.GetValueOrDefault(ProjectileRole.Shell),
+            roles.GetValueOrDefault(ProjectileRole.Ember),
+            roles.GetValueOrDefault(ProjectileRole.Other),
+            _assistSmallTransferred,
+            _assistShellTransferred,
+            _assistReclaimed);
+    }
 
     /// <summary>v2.9 领地战:mode=direct 时回退直击旧语义。</summary>
     public bool TerritoryMode =>
@@ -155,6 +210,16 @@ public sealed class BattleRuntime
         _fireCooldown.Clear();
         _recentEvents.Clear();
         _hitMarkers.Clear();
+        _assistWindowSecond = 0;
+        _assistSmallTransferred = 0;
+        _assistShellTransferred = 0;
+        _assistReclaimed = 0;
+        _assistVisuals.Clear();
+        _friendlyMovedTotal = 0;
+        _friendlyPromotedSmallReclaimedTotal = 0;
+        _enemyGroundTotal = 0;
+        _territorySpentTotal = 0;
+        _shieldSpentTotal = 0;
         _battleWorld.ResetSimulation();
         _battleWorld.SetWorldSize(_config.Arena.Width, _config.Arena.Height, markDirty: false);
         _battleWorld.GravityG = _config.Arena.GravityG;
@@ -249,7 +314,23 @@ public sealed class BattleRuntime
         if (dt <= 0)
             return;
         dt = Math.Min(dt, 0.1);
+        for (var i = _assistVisuals.Count - 1; i >= 0; i--)
+        {
+            var remaining = _assistVisuals[i].RemainingSeconds - dt;
+            if (remaining <= 0)
+                _assistVisuals.RemoveAt(i);
+            else
+                _assistVisuals[i] = _assistVisuals[i] with { RemainingSeconds = remaining };
+        }
         ElapsedSeconds += dt;
+        var assistSecond = (int)Math.Floor(ElapsedSeconds);
+        if (assistSecond != _assistWindowSecond)
+        {
+            _assistWindowSecond = assistSecond;
+            _assistSmallTransferred = 0;
+            _assistShellTransferred = 0;
+            _assistReclaimed = 0;
+        }
 
         foreach (var turret in Turrets.Where(x => x.Alive))
         {
@@ -372,6 +453,7 @@ public sealed class BattleRuntime
                     OwnerFactionId = turret.Id,
                     WeaponName = weapon.Name,
                     Damage = damage,
+                    Role = ProjectileRole.Other,
                 },
             });
         }
@@ -420,6 +502,7 @@ public sealed class BattleRuntime
                 WeaponName = weapon.Name,
                 Damage = value,
                 CapturesLeft = (int)Math.Clamp(value, 1, 100_000),
+                Role = ProjectileRole.Shell,
             },
         });
         EnforceProjectileLimit();
@@ -503,6 +586,8 @@ public sealed class BattleRuntime
                 WeaponName = "小球",
                 Damage = packed,
                 CapturesLeft = packed,
+                Role = ProjectileRole.SmallShot,
+                IsPromotedSmall = packed > 1,
             },
         });
     }
@@ -622,6 +707,7 @@ public sealed class BattleRuntime
                     WeaponName = weapon,
                     Damage = value,
                     CapturesLeft = (int)Math.Clamp(value, 1, 100_000),
+                    Role = ProjectileRole.Ember,
                 },
             });
         }
@@ -887,90 +973,88 @@ public sealed class BattleRuntime
         var maxRadius = Math.Max(
             ArenaFormulas.SmallBallSize(_config.Arena, _cellSize),
             _cellSize * _config.Arena.ShellSizeMaxCells);
-        var step = Math.Max(1, config.HaloReachFactor * 2 * maxRadius);
+        var bucketReach = Math.Max(config.HaloReachFactor, config.FriendlyAssistReachFactor);
+        var step = Math.Max(1, bucketReach * 2 * maxRadius);
         var buckets = new Dictionary<(int Col, int Row), List<Ball>>();
         foreach (var ball in balls)
         {
             if (ball.Projectile == null)
                 continue;
+            EnsureProjectileRole(ball.Projectile);
             var key = ((int)(ball.X / step), (int)(ball.Y / step));
             if (!buckets.TryGetValue(key, out var list))
                 buckets[key] = list = [];
             list.Add(ball);
         }
 
-        HashSet<Ball>? dead = null;
-        foreach (var ball in balls)
+        var dead = ResolveFriendlyAssists(balls, buckets, step, dt, config, out var enemyPairs);
+        if (config.FriendlyAssistEnabled)
         {
-            var mine = ball.Projectile;
-            if (mine == null || dead?.Contains(ball) == true)
-                continue;
-            var col = (int)(ball.X / step);
-            var row = (int)(ball.Y / step);
-            for (var dx = -1; dx <= 1 && mine.CapturesLeft > 0; dx++)
+            foreach (var pair in enemyPairs)
+                ResolveEnemyDuel(pair.Left, pair.Right, dt, config, ref dead);
+        }
+        else
+        {
+            // 关闭新机制时保持 v3.2 的遍历与结算顺序，确保旧回放哈希不变。
+            foreach (var ball in balls)
             {
-                for (var dy = -1; dy <= 1 && mine.CapturesLeft > 0; dy++)
+                var mine = ball.Projectile;
+                if (mine == null || dead?.Contains(ball) == true)
+                    continue;
+                var col = (int)(ball.X / step);
+                var row = (int)(ball.Y / step);
+                for (var dx = -1; dx <= 1 && mine.CapturesLeft > 0; dx++)
                 {
-                    if (!buckets.TryGetValue((col + dx, row + dy), out var list))
-                        continue;
-                    foreach (var other in list)
+                    for (var dy = -1; dy <= 1 && mine.CapturesLeft > 0; dy++)
                     {
-                        if (ReferenceEquals(other, ball)
-                            || dead?.Contains(other) == true
-                            || string.CompareOrdinal(ball.Id, other.Id) >= 0)
+                        if (!buckets.TryGetValue((col + dx, row + dy), out var list))
                             continue;
-                        var theirs = other.Projectile;
-                        if (theirs == null)
-                            continue;
-
-                        // HD-01:光晕(1.6×半径)相触即算接触
-                        var reach = (ball.Size + other.Size) * config.HaloReachFactor;
-                        if (DistanceSquared(ball.X, ball.Y, other.X, other.Y) > reach * reach)
-                            continue;
-
-                        var sameOwner = theirs.OwnerFactionId.Equals(
-                            mine.OwnerFactionId, StringComparison.OrdinalIgnoreCase);
-                        var v1 = Math.Max(1, mine.CapturesLeft);
-                        var v2 = Math.Max(1, theirs.CapturesLeft);
-
-                        if (sameOwner)
+                        foreach (var other in list)
                         {
-                            if (!config.MergeSameOwnerSmall)
+                            if (ReferenceEquals(other, ball)
+                                || dead?.Contains(other) == true
+                                || string.CompareOrdinal(ball.Id, other.Id) >= 0)
                                 continue;
-                            // HD-06:自家小球融入自家大球(大球间不融合)
-                            dead ??= [];
-                            if (v1 == 1 && v2 > 1)
-                            {
-                                theirs.CapturesLeft = v2 + 1;
-                                SyncShellSize(other);
-                                dead.Add(ball);
-                            }
-                            else if (v2 == 1 && v1 > 1)
-                            {
-                                mine.CapturesLeft = v1 + 1;
-                                SyncShellSize(ball);
-                                dead.Add(other);
-                            }
-                            if (dead.Contains(ball))
-                                break;
-                            continue;
-                        }
+                            var theirs = other.Projectile;
+                            if (theirs == null)
+                                continue;
 
-                        // HD-02:同步等量研磨 — 速率随较大球,单帧不超过较小方余值(1:1 守恒)
-                        var drain = (int)Math.Min(
-                            Math.Min(v1, v2),
-                            Math.Max(1, Math.Round(Math.Max(v1, v2) * config.GrindRatePerSecond * dt)));
-                        mine.CapturesLeft = v1 - drain;
-                        theirs.CapturesLeft = v2 - drain;
-                        SyncShellSize(ball);
-                        SyncShellSize(other);
-                        dead ??= [];
-                        if (theirs.CapturesLeft <= 0)
-                            dead.Add(other);
-                        if (mine.CapturesLeft <= 0)
-                        {
-                            dead.Add(ball);
-                            break;
+                            // HD-01:光晕(1.6×半径)相触即算接触
+                            var reach = (ball.Size + other.Size) * config.HaloReachFactor;
+                            if (DistanceSquared(ball.X, ball.Y, other.X, other.Y) > reach * reach)
+                                continue;
+
+                            var sameOwner = theirs.OwnerFactionId.Equals(
+                                mine.OwnerFactionId, StringComparison.OrdinalIgnoreCase);
+                            var v1 = Math.Max(1, mine.CapturesLeft);
+                            var v2 = Math.Max(1, theirs.CapturesLeft);
+
+                            if (sameOwner)
+                            {
+                                if (config.MergeSameOwnerSmall)
+                                {
+                                    dead ??= [];
+                                    if (v1 == 1 && v2 > 1)
+                                    {
+                                        theirs.CapturesLeft = v2 + 1;
+                                        SyncShellSize(other);
+                                        dead.Add(ball);
+                                    }
+                                    else if (v2 == 1 && v1 > 1)
+                                    {
+                                        mine.CapturesLeft = v1 + 1;
+                                        SyncShellSize(ball);
+                                        dead.Add(other);
+                                    }
+                                    if (dead.Contains(ball))
+                                        break;
+                                }
+                                continue;
+                            }
+
+                            ResolveEnemyDuel(ball, other, dt, config, ref dead);
+                            if (dead?.Contains(ball) == true)
+                                break;
                         }
                     }
                 }
@@ -981,12 +1065,288 @@ public sealed class BattleRuntime
             balls.RemoveAll(dead.Contains);
     }
 
+    private HashSet<Ball>? ResolveFriendlyAssists(
+        List<Ball> balls,
+        Dictionary<(int Col, int Row), List<Ball>> buckets,
+        double step,
+        double dt,
+        BalanceConfig config,
+        out List<DuelPair> enemyPairs)
+    {
+        enemyPairs = [];
+        if (!config.FriendlyAssistEnabled)
+            return null;
+
+        var assignments = new Dictionary<Ball, AssistAssignment>();
+        foreach (var ball in balls)
+        {
+            var mine = ball.Projectile;
+            if (mine == null || mine.CapturesLeft <= 0)
+                continue;
+            var col = (int)(ball.X / step);
+            var row = (int)(ball.Y / step);
+            for (var dx = -1; dx <= 1; dx++)
+            for (var dy = -1; dy <= 1; dy++)
+            {
+                if (!buckets.TryGetValue((col + dx, row + dy), out var nearby))
+                    continue;
+                foreach (var other in nearby)
+                {
+                    if (ReferenceEquals(ball, other) || string.CompareOrdinal(ball.Id, other.Id) >= 0)
+                        continue;
+                    var theirs = other.Projectile;
+                    if (theirs == null || theirs.CapturesLeft <= 0)
+                        continue;
+                    var distance = DistanceSquared(ball.X, ball.Y, other.X, other.Y);
+                    var sameOwner = mine.OwnerFactionId.Equals(
+                        theirs.OwnerFactionId, StringComparison.OrdinalIgnoreCase);
+                    if (!sameOwner)
+                    {
+                        var enemyReach = (ball.Size + other.Size) * config.HaloReachFactor;
+                        if (distance <= enemyReach * enemyReach)
+                            enemyPairs.Add(new DuelPair(ball, other));
+                        continue;
+                    }
+                    var reach = (ball.Size + other.Size) * config.FriendlyAssistReachFactor;
+                    if (distance > reach * reach)
+                        continue;
+
+                    var roleA = RoleOf(mine);
+                    var roleB = RoleOf(theirs);
+                    Ball donor;
+                    Ball receiver;
+                    var small = false;
+                    if (roleA == ProjectileRole.SmallShot && roleB == ProjectileRole.Shell)
+                    {
+                        donor = ball;
+                        receiver = other;
+                        small = true;
+                    }
+                    else if (roleB == ProjectileRole.SmallShot && roleA == ProjectileRole.Shell)
+                    {
+                        donor = other;
+                        receiver = ball;
+                        small = true;
+                    }
+                    else if (roleA == ProjectileRole.Shell && roleB == ProjectileRole.Shell)
+                    {
+                        var compare = CompareAssistRank(ball, other);
+                        receiver = compare >= 0 ? ball : other;
+                        donor = ReferenceEquals(receiver, ball) ? other : ball;
+                    }
+                    else
+                    {
+                        continue;
+                    }
+
+                    var candidate = new AssistAssignment(donor, receiver, small, distance);
+                    if (!assignments.TryGetValue(donor, out var existing)
+                        || IsBetterReceiver(candidate, existing))
+                    {
+                        assignments[donor] = candidate;
+                    }
+                }
+            }
+        }
+
+        if (assignments.Count == 0)
+            return null;
+
+        HashSet<Ball>? dead = null;
+        foreach (var group in assignments.Values
+                     .GroupBy(x => (x.Receiver, x.Small))
+                     .OrderByDescending(x => x.Key.Receiver.Projectile!.CapturesLeft)
+                     .ThenByDescending(x => StableAssistScore(x.Key.Receiver.Id))
+                     .ThenBy(x => x.Key.Receiver.Id, StringComparer.Ordinal))
+        {
+            var receiver = group.Key.Receiver;
+            var target = receiver.Projectile!;
+            if (dead?.Contains(receiver) == true || target.CapturesLeft <= 0)
+                continue;
+            var small = group.Key.Small;
+            var rate = small ? config.FriendlyAbsorbSmallRate : config.FriendlyShellTransferRate;
+            var carry = (small ? target.FriendlySmallCarry : target.FriendlyShellCarry) + rate * dt;
+            var budget = (int)Math.Floor(carry + 1e-12);
+            var transferred = 0;
+            double visualFromX = receiver.X;
+            double visualFromY = receiver.Y;
+            foreach (var assignment in group
+                         .OrderByDescending(x => x.Donor.Projectile!.CapturesLeft)
+                         .ThenBy(x => x.DistanceSquared)
+                         .ThenBy(x => x.Donor.Id, StringComparer.Ordinal))
+            {
+                if (budget <= 0 || target.CapturesLeft >= config.FriendlyAssistMaxValue)
+                    break;
+                var donor = assignment.Donor;
+                var source = donor.Projectile!;
+                if (dead?.Contains(donor) == true || source.CapturesLeft <= 0)
+                    continue;
+                var amount = Math.Min(
+                    budget,
+                    Math.Min(source.CapturesLeft, config.FriendlyAssistMaxValue - target.CapturesLeft));
+                if (amount <= 0)
+                    continue;
+                source.CapturesLeft -= amount;
+                target.CapturesLeft += amount;
+                budget -= amount;
+                transferred += amount;
+                _friendlyMovedTotal += amount;
+                visualFromX = donor.X;
+                visualFromY = donor.Y;
+                if (source.CapturesLeft <= 0)
+                {
+                    dead ??= [];
+                    dead.Add(donor);
+                    _assistReclaimed++;
+                    if (source.IsPromotedSmall)
+                        _friendlyPromotedSmallReclaimedTotal++;
+                }
+                else if (!small)
+                {
+                    SyncShellSize(donor);
+                }
+            }
+
+            carry = Math.Max(0, carry - transferred);
+            carry -= Math.Floor(carry);
+            if (small)
+            {
+                target.FriendlySmallCarry = carry;
+                _assistSmallTransferred += transferred;
+            }
+            else
+            {
+                target.FriendlyShellCarry = carry;
+                _assistShellTransferred += transferred;
+            }
+            if (transferred > 0)
+            {
+                SyncShellSize(receiver);
+                if (config.FriendlyAssistVisualEnabled)
+                {
+                    var existingVisual = _assistVisuals.FindIndex(x =>
+                        Math.Abs(x.ToX - receiver.X) < 1e-6
+                        && Math.Abs(x.ToY - receiver.Y) < 1e-6
+                        && x.Color.Equals(receiver.Color, StringComparison.OrdinalIgnoreCase));
+                    var visual = new AssistTransferVisual(
+                        visualFromX, visualFromY, receiver.X, receiver.Y,
+                        receiver.Color, transferred, 0.65);
+                    if (existingVisual >= 0)
+                    {
+                        var existing = _assistVisuals[existingVisual];
+                        _assistVisuals[existingVisual] = visual with { Amount = existing.Amount + transferred };
+                    }
+                    else
+                    {
+                        _assistVisuals.Add(visual);
+                    }
+                }
+            }
+        }
+        return dead;
+    }
+
+    private void ResolveEnemyDuel(
+        Ball ball,
+        Ball other,
+        double dt,
+        BalanceConfig config,
+        ref HashSet<Ball>? dead)
+    {
+        if (dead?.Contains(ball) == true || dead?.Contains(other) == true)
+            return;
+        var mine = ball.Projectile;
+        var theirs = other.Projectile;
+        if (mine == null || theirs == null || mine.CapturesLeft <= 0 || theirs.CapturesLeft <= 0)
+            return;
+        if (mine.OwnerFactionId.Equals(theirs.OwnerFactionId, StringComparison.OrdinalIgnoreCase))
+            return;
+
+        var v1 = Math.Max(1, mine.CapturesLeft);
+        var v2 = Math.Max(1, theirs.CapturesLeft);
+        var drain = (int)Math.Min(
+            Math.Min(v1, v2),
+            Math.Max(1, Math.Round(Math.Max(v1, v2) * config.GrindRatePerSecond * dt)));
+        mine.CapturesLeft = v1 - drain;
+        theirs.CapturesLeft = v2 - drain;
+        _enemyGroundTotal += drain * 2L;
+        SyncTransferredProjectileSize(ball);
+        SyncTransferredProjectileSize(other);
+        dead ??= [];
+        if (theirs.CapturesLeft <= 0)
+            dead.Add(other);
+        if (mine.CapturesLeft <= 0)
+            dead.Add(ball);
+    }
+
+    private int CompareAssistRank(Ball left, Ball right)
+    {
+        var value = left.Projectile!.CapturesLeft.CompareTo(right.Projectile!.CapturesLeft);
+        if (value != 0)
+            return value;
+        var random = StableAssistScore(left.Id).CompareTo(StableAssistScore(right.Id));
+        return random != 0 ? random : string.CompareOrdinal(left.Id, right.Id);
+    }
+
+    private bool IsBetterReceiver(AssistAssignment candidate, AssistAssignment existing)
+    {
+        var rank = CompareAssistRank(candidate.Receiver, existing.Receiver);
+        if (rank != 0)
+            return rank > 0;
+        var distance = candidate.DistanceSquared.CompareTo(existing.DistanceSquared);
+        return distance != 0
+            ? distance < 0
+            : string.CompareOrdinal(candidate.Receiver.Id, existing.Receiver.Id) < 0;
+    }
+
+    private uint StableAssistScore(string ballId)
+    {
+        var hash = 2166136261u ^ unchecked((uint)Seed);
+        foreach (var c in ballId)
+            hash = (hash ^ c) * 16777619u;
+        return hash;
+    }
+
+    private static void EnsureProjectileRole(ProjectileState projectile)
+    {
+        if (projectile.Role != ProjectileRole.Unknown)
+            return;
+        projectile.Role = projectile.WeaponName.Trim() switch
+        {
+            "小球" or "SmallBall" or "齐射" or "Volley" or "直射" or "Direct" => ProjectileRole.SmallShot,
+            "大球" or "BigBall" => ProjectileRole.Shell,
+            _ => ProjectileRole.Other,
+        };
+    }
+
+    private static ProjectileRole RoleOf(ProjectileState projectile)
+    {
+        EnsureProjectileRole(projectile);
+        return projectile.Role;
+    }
+
+    private sealed record AssistAssignment(Ball Donor, Ball Receiver, bool Small, double DistanceSquared);
+    private sealed record DuelPair(Ball Left, Ball Right);
+
+    private void SyncTransferredProjectileSize(Ball ball)
+    {
+        if (ball.Projectile is { } projectile
+            && RoleOf(projectile) is ProjectileRole.Shell or ProjectileRole.Ember)
+        {
+            SyncShellSize(ball);
+        }
+    }
+
     /// <summary>v2.12.2 HD-03:弹体尺寸/质量随数值同步(磨小/融入即时可见)。</summary>
     private void SyncShellSize(Ball ball)
     {
         var value = Math.Max(1, ball.Projectile?.CapturesLeft ?? 1);
-        ball.Size = ShellSizeFor(value);
-        ball.Weight = ShellWeightFor(value);
+        var size = ShellSizeFor(value);
+        var weight = ShellWeightFor(value);
+        if (Math.Abs(ball.Size - size) > 1e-9)
+            ball.Size = size;
+        if (Math.Abs(ball.Weight - weight) > 1e-9)
+            ball.Weight = weight;
     }
 
     /// <summary>v2.12 SH-01~04:实体护罩 — 小球湮灭磨盾,大球按比例抵消并反弹。返回 true 表示本弹已处理完毕(消失或反弹)。</summary>
@@ -1006,12 +1366,14 @@ public sealed class BattleRuntime
                 continue;
 
             var remaining = Math.Max(1, projectile.CapturesLeft);
+            var roleAwareSmall = _balance.Current.FriendlyAssistEnabled
+                                 && RoleOf(projectile) == ProjectileRole.SmallShot;
             if (turret.Id.Equals(projectile.OwnerFactionId, StringComparison.OrdinalIgnoreCase))
             {
                 // v2.12.2 HD-05:自家小球**飞回**碰自家护罩 → 转化为护盾;
                 // 出膛外飞的放行(否则出膛点即在护罩内,小球攻势会被整体吞掉)
                 // v2.12.4 TK-07:决胜时刻后转化关闭
-                if (remaining <= 1
+                if ((roleAwareSmall || remaining <= 1)
                     && _balance.Current.SelfShieldRefundEnabled
                     && (!SuddenDeath || !_balance.Current.SuddenDeathShieldBlock))
                 {
@@ -1019,17 +1381,23 @@ public sealed class BattleRuntime
                         + ball.Vy * (turret.TurretY - ball.Y);
                     if (towardTurret > 0)
                     {
-                        turret.Shield = Math.Min(turret.MaxShield, turret.Shield + costPerValue);
+                        turret.Shield = Math.Min(
+                            turret.MaxShield,
+                            turret.Shield + costPerValue * (roleAwareSmall ? remaining : 1));
+                        _shieldSpentTotal += roleAwareSmall ? remaining : 1;
                         _battleWorld.Balls.Remove(ball);
                         return true;
                     }
                 }
                 continue;
             }
-            if (remaining <= 1)
+            if (roleAwareSmall || remaining <= 1)
             {
                 // 小球:湮灭并磨损护盾
-                turret.Shield = Math.Max(0, turret.Shield - costPerValue);
+                turret.Shield = Math.Max(
+                    0,
+                    turret.Shield - costPerValue * (roleAwareSmall ? remaining : 1));
+                _shieldSpentTotal += roleAwareSmall ? remaining : 1;
                 _battleWorld.Balls.Remove(ball);
                 return true;
             }
@@ -1038,6 +1406,7 @@ public sealed class BattleRuntime
             var capacity = (long)(turret.Shield / costPerValue);
             var cancel = (int)Math.Clamp(Math.Min((long)remaining, capacity), 1, int.MaxValue);
             projectile.CapturesLeft = remaining - cancel;
+            _shieldSpentTotal += cancel;
             turret.Shield = Math.Max(0, turret.Shield - cancel * costPerValue);
             if (projectile.CapturesLeft <= 0)
             {
@@ -1119,13 +1488,16 @@ public sealed class BattleRuntime
                     defender.Hp = _territoryOwned[owner];
                 }
                 projectile.CapturesLeft--;
+                _territorySpentTotal++;
             }
         }
 
         if (captured)
         {
             TerritoryVersion++;
-            if (projectile.CapturesLeft > 0)
+            if (projectile.CapturesLeft > 0
+                && (!_balance.Current.FriendlyAssistEnabled
+                    || RoleOf(projectile) is ProjectileRole.Shell or ProjectileRole.Ember))
                 SyncShellSize(ball);
         }
         return projectile.CapturesLeft <= 0;

@@ -53,9 +53,25 @@ public sealed class WeaponCatalog
         Reload();
     }
 
+    private WeaponCatalog(IReadOnlyList<WeaponDefinition> weapons, IShellLog log)
+    {
+        _path = "";
+        _log = log;
+        Weapons = CloneDefinitions(weapons);
+        Validate(Weapons);
+        RebuildIndex();
+    }
+
     public IReadOnlyList<WeaponDefinition> Weapons { get; private set; } = [];
 
     public string Path => _path;
+
+    public static WeaponCatalog CreateMemory(IReadOnlyList<WeaponDefinition> weapons, IShellLog log) =>
+        new(weapons, log);
+
+    public static IReadOnlyList<WeaponDefinition> CloneDefinitions(IReadOnlyList<WeaponDefinition> weapons) =>
+        JsonSerializer.Deserialize<List<WeaponDefinition>>(
+            JsonSerializer.Serialize(weapons, JsonOptions), JsonOptions) ?? [];
 
     public bool TryResolve(string? name, out WeaponDefinition weapon)
     {

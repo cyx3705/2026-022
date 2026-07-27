@@ -175,6 +175,15 @@ public sealed class Ball
     }
 }
 
+public enum ProjectileRole
+{
+    Unknown,
+    Other,
+    SmallShot,
+    Shell,
+    Ember,
+}
+
 public sealed class ProjectileState
 {
     public required string OwnerFactionId { get; init; }
@@ -184,6 +193,16 @@ public sealed class ProjectileState
 
     /// <summary>领地模式:剩余可占领格数(0=未初始化,由运行时按伤害推导)。</summary>
     public int CapturesLeft { get; set; }
+
+    /// <summary>弹体身份与积分正交；升格小球即使 CapturesLeft&gt;1 仍是 SmallShot。</summary>
+    public ProjectileRole Role { get; set; }
+
+    /// <summary>由小球池打包产生；用于累计回收审计，不参与身份判断。</summary>
+    public bool IsPromotedSmall { get; set; }
+
+    /// <summary>友军小球/大球积分传递的小数预算；无目标时不积累整点。</summary>
+    public double FriendlySmallCarry { get; set; }
+    public double FriendlyShellCarry { get; set; }
 }
 
 /// <summary>属性补丁(生成器/销毁器)。</summary>

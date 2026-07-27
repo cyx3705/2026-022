@@ -15,7 +15,10 @@ public sealed class ArenaView : FrameworkElement
     private static readonly Brush DividerBrush = FrozenBrush(Color.FromArgb(40, 80, 90, 110));
     private static readonly Pen DividerPen = FrozenPen(DividerBrush, 1);
     private static readonly Typeface LabelTypeface = new("Segoe UI Semibold");
-    private static readonly Dictionary<string, SolidColorBrush> BrushCache = new(StringComparer.OrdinalIgnoreCase);
+    [ThreadStatic]
+    private static Dictionary<string, SolidColorBrush>? _brushCache;
+    private static Dictionary<string, SolidColorBrush> BrushCache =>
+        _brushCache ??= new(StringComparer.OrdinalIgnoreCase);
 
     private readonly SceneWorld _world;
     private readonly BattleRuntime _battle;
@@ -58,6 +61,7 @@ public sealed class ArenaView : FrameworkElement
         dc.DrawLine(DividerPen, new Point(0, cy), new Point(worldW, cy));
 
         DrawProjectiles(dc);
+        DrawAssistTransfers(dc);
         DrawTurrets(dc);
         DrawHitMarkers(dc);
 
@@ -199,6 +203,31 @@ public sealed class ArenaView : FrameworkElement
                     dc.Pop();
                 }
             }
+        }
+    }
+
+    private void DrawAssistTransfers(DrawingContext dc)
+    {
+        foreach (var transfer in _battle.AssistVisuals)
+        {
+            var color = SceneWorld.ParseColor(transfer.Color, Colors.White);
+            var alpha = (byte)Math.Clamp(120 * transfer.RemainingSeconds / 0.65, 18, 120);
+            var pen = new Pen(FrozenBrush(Color.FromArgb(alpha, color.R, color.G, color.B)), 1.4)
+            {
+                StartLineCap = PenLineCap.Round,
+                EndLineCap = PenLineCap.Round,
+            };
+            pen.Freeze();
+            dc.DrawLine(pen, new Point(transfer.FromX, transfer.FromY), new Point(transfer.ToX, transfer.ToY));
+            var text = new FormattedText(
+                $"+{transfer.Amount}",
+                CultureInfo.InvariantCulture,
+                FlowDirection.LeftToRight,
+                LabelTypeface,
+                10,
+                FrozenBrush(Color.FromArgb((byte)Math.Min(230, alpha + 100), color.R, color.G, color.B)),
+                VisualTreeHelper.GetDpi(this).PixelsPerDip);
+            dc.DrawText(text, new Point(transfer.ToX + 5, transfer.ToY - text.Height - 3));
         }
     }
 
