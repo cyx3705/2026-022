@@ -20,6 +20,7 @@ internal sealed class WBallWorkspaceViews
     private readonly ObjectDebugView _objectDebug;
     private readonly BallObjectView _ball;
     private readonly RefereeView _referee;
+    private readonly ArenaSettingsView _arenaSettings;
     private readonly StageView _stageView;
     private readonly IReadOnlyList<ICommandBusAware> _commandViews;
 
@@ -53,7 +54,10 @@ internal sealed class WBallWorkspaceViews
         Stage.Changed += SyncAutoStep;
         Director.StateChanged += SyncAutoStep;
 
-        _commandViews = [_dropZone, _objectDebug, _ball, _referee];
+        // v3.1:对战区设置窗(命令的图形外壳)
+        _arenaSettings = new ArenaSettingsView(battleConfig, Battle, weapons, Stage);
+
+        _commandViews = [_dropZone, _objectDebug, _ball, _referee, _arenaSettings];
         ToolWindows = CreateToolWindows();
     }
 
@@ -141,6 +145,19 @@ internal sealed class WBallWorkspaceViews
             DefaultRatio = 0.22,
             DefaultVisible = false,
             ContentFactory = () => _referee,
+        },
+        // v3.1 AW-01:「对战区」设置窗 — 默认隐藏,win.show name=arenaset 或「对战台→对战区设置」唤出。
+        // 并入既有调试标签组(objdebug)而非新开右侧窗格:新窗格拿不到稳定比例会塌缩;
+        // 面板 id(battle/editor)由面板系统后置创建,注册期不能作为 tab 目标。
+        new()
+        {
+            Id = "arenaset",
+            Title = "对战区",
+            DefaultSide = DockSide.Tab,
+            DefaultTabTarget = "objdebug",
+            DefaultRatio = 0.26,
+            DefaultVisible = false,
+            ContentFactory = () => _arenaSettings,
         },
     ];
 }

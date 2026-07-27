@@ -148,18 +148,56 @@ public sealed class ArenaView : FrameworkElement
             dc.DrawEllipse(brush, null, new Point(ball.X, ball.Y), radius, radius);
 
             // v2.11 BV-01:大球标剩余占领数,随啃格递减
+            // v3.1 Q4:字号随弹体(即战场规模)缩放但有下限;超出球体的部分暗淡,防止数字视觉上取代小球
             var captures = ball.Projectile?.CapturesLeft ?? 0;
-            if (captures > 1 && radius >= 8)
+            if (captures > 1)
             {
+                var (factor, fontMin, fontMax, outsideOpacity) = _battle.ShellLabelStyle;
+                var dpi = VisualTreeHelper.GetDpi(this).PixelsPerDip;
+                var fontSize = Math.Clamp(radius * factor, fontMin, fontMax);
+                var label = FormatNumber(captures);
                 var text = new FormattedText(
-                    FormatNumber(captures),
+                    label,
                     CultureInfo.InvariantCulture,
                     FlowDirection.LeftToRight,
                     LabelTypeface,
-                    Math.Clamp(radius * 0.8, 8, 22),
+                    fontSize,
                     FrozenBrush(Color.FromArgb(235, 10, 12, 16)),
-                    VisualTreeHelper.GetDpi(this).PixelsPerDip);
-                dc.DrawText(text, new Point(ball.X - text.Width / 2, ball.Y - text.Height / 2));
+                    dpi);
+                var origin = new Point(ball.X - text.Width / 2, ball.Y - text.Height / 2);
+                var body = new EllipseGeometry(new Point(ball.X, ball.Y), radius, radius);
+                body.Freeze();
+
+                dc.PushClip(body);
+                dc.DrawText(text, origin);
+                dc.Pop();
+
+                var overflows = text.Width > radius * 2 || text.Height > radius * 2;
+                if (overflows && outsideOpacity > 0.001)
+                {
+                    var faded = new FormattedText(
+                        label,
+                        CultureInfo.InvariantCulture,
+                        FlowDirection.LeftToRight,
+                        LabelTypeface,
+                        fontSize,
+                        FrozenBrush(Color.FromArgb(
+                            (byte)Math.Clamp(235 * outsideOpacity, 0, 255),
+                            color.R,
+                            color.G,
+                            color.B)),
+                        dpi);
+                    var box = new RectangleGeometry(new Rect(
+                        origin.X - 1,
+                        origin.Y - 1,
+                        text.Width + 2,
+                        text.Height + 2));
+                    var outside = new CombinedGeometry(GeometryCombineMode.Exclude, box, body);
+                    outside.Freeze();
+                    dc.PushClip(outside);
+                    dc.DrawText(faded, origin);
+                    dc.Pop();
+                }
             }
         }
     }
@@ -231,7 +269,7 @@ public sealed class ArenaView : FrameworkElement
             DrawRingGauge(
                 dc,
                 center,
-                r * 1.55,
+                r * _battle.ShieldRingScale, // v3.1:与护罩判定共读同一字段
                 Math.Max(2.5, r * 0.13),
                 shieldRatio,
                 Color.FromArgb(235, Lighten(color.R), Lighten(color.G), Lighten(color.B)));
