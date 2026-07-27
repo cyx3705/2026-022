@@ -21,6 +21,7 @@ internal sealed class WBallWorkspaceViews
     private readonly BallObjectView _ball;
     private readonly RefereeView _referee;
     private readonly ArenaSettingsView _arenaSettings;
+    private readonly BalanceSettingsView _balanceSettings;
     private readonly StageView _stageView;
     private readonly IReadOnlyList<ICommandBusAware> _commandViews;
 
@@ -29,6 +30,8 @@ internal sealed class WBallWorkspaceViews
         IShellLog log,
         string dataRoot,
         BattleConfigStore battleConfig,
+        BalanceConfigStore balanceConfig,
+        PresetStore presets,
         WeaponCatalog weapons,
         EconomyBridge economyBridge)
     {
@@ -45,9 +48,11 @@ internal sealed class WBallWorkspaceViews
             GravityG = 0,
             BallCollisionEnabled = true,
             Seed = world.Seed,
+            WallRestitution = balanceConfig.Current.WallRestitution,
+            BallRestitution = balanceConfig.Current.BallRestitution,
         };
-        Battle = new BattleRuntime(world, BattleWorld, battleConfig, weapons, log);
-        Director = new BattleDirector(world, BattleWorld, Battle, weapons, economyBridge, Stage, log);
+        Battle = new BattleRuntime(world, BattleWorld, battleConfig, weapons, log, balanceConfig);
+        Director = new BattleDirector(world, BattleWorld, Battle, weapons, economyBridge, Stage, log, balanceConfig);
         var arenaView = new ArenaView(BattleWorld, Battle);
         _stageView = new StageView(Stage, world, BattleWorld, Director, _dropZone, arenaView, weapons);
         SyncAutoStep();
@@ -56,8 +61,9 @@ internal sealed class WBallWorkspaceViews
 
         // v3.1:对战区设置窗(命令的图形外壳)
         _arenaSettings = new ArenaSettingsView(battleConfig, Battle, weapons, Stage);
+        _balanceSettings = new BalanceSettingsView(balanceConfig, battleConfig, presets);
 
-        _commandViews = [_dropZone, _objectDebug, _ball, _referee, _arenaSettings];
+        _commandViews = [_dropZone, _objectDebug, _ball, _referee, _arenaSettings, _balanceSettings];
         ToolWindows = CreateToolWindows();
     }
 
@@ -158,6 +164,16 @@ internal sealed class WBallWorkspaceViews
             DefaultRatio = 0.26,
             DefaultVisible = false,
             ContentFactory = () => _arenaSettings,
+        },
+        new()
+        {
+            Id = "balance",
+            Title = "战斗平衡",
+            DefaultSide = DockSide.Tab,
+            DefaultTabTarget = "arenaset",
+            DefaultRatio = 0.28,
+            DefaultVisible = false,
+            ContentFactory = () => _balanceSettings,
         },
     ];
 }

@@ -13,6 +13,7 @@ public static class DemoCommands
         StageState stage,
         ScenarioStore scenarios,
         BattleConfigStore battleConfig,
+        BalanceConfigStore balanceConfig,
         WeaponCatalog weapons,
         BattleRuntime battle,
         BattleDirector director,
@@ -45,7 +46,7 @@ public static class DemoCommands
 
                     var scenarioName = ctx.GetString("scenario") ?? "demo4";
                     var snap = scenarios.Load(scenarioName);
-                    scenarios.Apply(snap, battleConfig, weapons, economyWorld);
+                    scenarios.Apply(snap, battleConfig, balanceConfig, weapons, economyWorld);
                     battle.ReloadConfiguration();
 
                     var seed = ctx.Has("seed") ? ctx.GetInt("seed") : snap.Seed;

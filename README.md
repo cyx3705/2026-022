@@ -8,15 +8,13 @@ WBall 是一个基于 .NET 8、WPF 与 OneHistory AppShell 的可配置落球对
 
 ## 当前状态
 
-- 当前应用版本：`3.1.0`
-- 当前代码基线：v3.1「对战区自定义与设置窗」已交付
-- 下一目标：v3.2「战斗平衡自定义、无头试跑与预设档」待开工
+- 当前应用版本：`3.2.0`
+- 当前代码基线：v3.2「战斗平衡自定义、无头试跑与预设档」已交付
+- v3.1 回退兼容：关闭三项 v3.2 默认玩法变更后，留档哈希逐字一致
 - 平台：Windows、`.NET 8`、WPF
 - 框架：`OneHistory.AppShell.Shell 0.5.0`
 
-v3.1 已将对战区规模、网格、炮塔位置、护罩、弹体映射和初始弹药等参数迁入 `arena_layout.json`，并提供 `arena.*` 命令族与「对战区」设置窗。
-
-v3.2 计划增加独立的 `battle_balance.json`、`balance.*` 命令族、「战斗平衡」窗、隔离当前战局的多种子无头试跑，以及 `standard`、`rush`、`marathon` 数值预设。详细规格见 [`b-Office/WBall_v3.2_战斗平衡自定义与无头试跑需求.md`](./b-Office/WBall_v3.2_战斗平衡自定义与无头试跑需求.md)。
+v3.2 在 v3.1 的 `arena_layout.json` 规模配置之上新增独立的 `battle_balance.json`，把射速、升格、对消、护罩、余烬、经济映射、物理弹性和回合收敛参数开放为 `balance.*` 命令与「战斗平衡」设置窗。`balance.sim` 可在隔离实例中按多个种子试跑，不写配置、不改变当前战局；预设档只携带 arena + balance，内置 `standard`、`rush`、`marathon`。详细规格与验收数据见 [`b-Office/WBall_v3.2_战斗平衡自定义与无头试跑需求.md`](./b-Office/WBall_v3.2_战斗平衡自定义与无头试跑需求.md)。
 
 ## 主要能力
 
@@ -24,7 +22,9 @@ v3.2 计划增加独立的 `battle_balance.json`、`balance.*` 命令族、「�
 - 领地战与 direct 对照模式
 - 大球、小球、齐射、直射、护盾等武器与弹药机制
 - 固定 60 Hz 时间步进、种子复现和确定性哈希
-- 可配置对战区、炮台、武器库、HUD 和录制参数
+- 可配置对战区、战斗平衡、炮台、武器库、HUD 和录制参数
+- 隔离式多种子无头试跑，支持表格/CSV、墙钟超时与取消后部分结果
+- `standard`、`rush`、`marathon` 内置数值预设和用户预设往返
 - 场景、线框、异形实体及属性表编辑
 - 剧本保存、读取与演示场景
 - 命令总线：界面操作均有对应命令，控制台可独立驱动程序
@@ -95,6 +95,10 @@ demo.play seed=42
 battle.status
 arena.config
 win.show name=arenaset
+balance.config
+balance.sim seeds=42..49 seconds=180 config=current format=table
+preset.list
+win.show name=balance
 record.status
 ```
 
@@ -103,8 +107,10 @@ record.status
 运行数据默认保存在 `%AppData%/WBall/`，主要包括：
 
 - `arena_layout.json`：对战区规模及弹体映射
+- `battle_balance.json`：战斗平衡与回合参数
 - `turrets.json`：炮台定义
 - `weapons.json`：武器库
+- `presets/`：内置及用户数值预设
 - `workspace/scenes/`：场景文件
 - `workspace/scenarios/`：对战剧本
 - `panels/`：控制面板配置
@@ -117,10 +123,14 @@ $env:DOTNET_EnableWriteXorExecute='0'
 dotnet run --project .\b-Code-Verify\WBallVerify\WBallVerify.csproj -c Debug
 ```
 
-验证器覆盖同种子确定性、不同种子差异、领地变化、整局收敛和巨球触杀等行为。v3.1 的 `seed=42 @60s` 留档哈希为：
+验证器覆盖 v3.1 回退、v3.2 同种子确定性、升格梯度、超 512 队列与增量总值、禁用护盾再生、巨球触杀、硬时限、剧本/预设往返、无头试跑隔离与取消部分结果，以及 `balance.*` / `preset.*` 命令烟测。
+
+留档哈希：
 
 ```text
-6381A3898C0FAD65B57D43C140917A010713AA3015F601BACE14C7E5B88333F3
+v3.1 rollback, seed=42 @60s: 6381A3898C0FAD65B57D43C140917A010713AA3015F601BACE14C7E5B88333F3
+v3.2 default,  seed=42 @60s: E24FD280C34B54F79DAFCAE466DE299B4B76F56B69D83EF63757B96F81BF9184
+v3.2 default,  seed=43 @60s: 436DAEA13BE0430B1C2513DC0D22DB04047352E14711673BC26451490A071554
 ```
 
 ## 开发约束

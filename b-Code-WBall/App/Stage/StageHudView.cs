@@ -112,7 +112,7 @@ public sealed class StageHudView : FrameworkElement
         dc.DrawRoundedRectangle(fill, line, rect, 3, 3);
         dc.DrawRectangle(FrozenBrush(color), null, new Rect(rect.X, rect.Y, 4, rect.Height));
         DrawText(dc, faction.Name, rect.X + 10, rect.Y + 2, 11, Brushes.White);
-        var ammo = faction.SmallAmmo + faction.Ammo.Sum(shell => shell.Value);
+        var ammo = faction.SmallAmmo + faction.QueuedAmmoValue;
         DrawText(
             dc,
             faction.Alive

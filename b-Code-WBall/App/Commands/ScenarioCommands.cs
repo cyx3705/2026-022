@@ -10,6 +10,7 @@ public static class ScenarioCommands
         CommandRegistry registry,
         ScenarioStore scenarios,
         BattleConfigStore battleConfig,
+        BalanceConfigStore balanceConfig,
         WeaponCatalog weapons,
         BattleRuntime battle,
         BattleDirector director,
@@ -48,6 +49,7 @@ public static class ScenarioCommands
                         ctx.RequireString("name"),
                         ctx.Has("seed") ? ctx.GetInt("seed") : director.Seed,
                         battleConfig,
+                        balanceConfig,
                         weapons,
                         economyWorld.LastScenePath);
                     var path = scenarios.Save(snap);
@@ -75,7 +77,7 @@ public static class ScenarioCommands
                 try
                 {
                     var snap = scenarios.Load(ctx.RequireString("name"));
-                    scenarios.Apply(snap, battleConfig, weapons, economyWorld);
+                    scenarios.Apply(snap, battleConfig, balanceConfig, weapons, economyWorld);
                     battle.ReloadConfiguration();
                     return CommandResult.Ok(
                         $"已加载剧本 {snap.Name} seed={snap.Seed} turrets={snap.Turrets.Count} " +

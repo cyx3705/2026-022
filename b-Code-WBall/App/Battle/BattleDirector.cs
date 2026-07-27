@@ -30,6 +30,7 @@ public sealed class BattleDirector
     private readonly EconomyBridge _economyBridge;
     private readonly StageState _stage;
     private readonly IShellLog _log;
+    private readonly BalanceConfigStore _balance;
     private double _countdownRemaining;
     private double _settlingRemaining;
 
@@ -40,7 +41,8 @@ public sealed class BattleDirector
         WeaponCatalog weapons,
         EconomyBridge economyBridge,
         StageState stage,
-        IShellLog log)
+        IShellLog log,
+        BalanceConfigStore? balance = null)
     {
         _economyWorld = economyWorld;
         _battleWorld = battleWorld;
@@ -49,8 +51,10 @@ public sealed class BattleDirector
         _economyBridge = economyBridge;
         _stage = stage;
         _log = log;
+        _balance = balance ?? BalanceConfigStore.CreateMemory(new BalanceConfig(), log);
         _economyBridge.Availability = IsUnlocked;
-        _economyBridge.ShieldEconomyBlocked = () => _battle.SuddenDeath;
+        _economyBridge.ShieldEconomyBlocked = () =>
+            _balance.Current.SuddenDeathShieldBlock && _battle.SuddenDeath;
         _battle.SetUnlockPredicate(IsUnlocked);
         _battle.EventRaised += OnBattleEvent;
     }
@@ -66,7 +70,7 @@ public sealed class BattleDirector
     public IReadOnlyList<BattleEvent> Events => _events;
     private readonly List<BattleEvent> _events = [];
 
-    public void Start(int seed, double countdownSeconds = 1)
+    public void Start(int seed, double? countdownSeconds = null)
     {
         Seed = seed;
         ElapsedSeconds = 0;
@@ -84,7 +88,7 @@ public sealed class BattleDirector
         _economyWorld.IsPlaying = false;
 
         _battle.AutomaticFire = true;
-        _countdownRemaining = Math.Max(0, countdownSeconds);
+        _countdownRemaining = Math.Max(0, countdownSeconds ?? _balance.Current.CountdownSeconds);
         State = _countdownRemaining > 0 ? DirectorState.Countdown : DirectorState.Running;
         _stage.SetMode(StageMode.Play);
         Raise("start", $"对战开始 seed={seed}");
@@ -156,7 +160,7 @@ public sealed class BattleDirector
         if (_battle.WinnerId != null)
         {
             State = DirectorState.Settling;
-            _settlingRemaining = 2;
+            _settlingRemaining = _balance.Current.SettleSeconds;
             _battle.AutomaticFire = false;
             StateChanged?.Invoke();
         }

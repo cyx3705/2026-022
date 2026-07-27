@@ -12,6 +12,7 @@ public static class DirectorCommands
         WeaponCatalog weapons,
         ScenarioStore? scenarios = null,
         BattleConfigStore? battleConfig = null,
+        BalanceConfigStore? balanceConfig = null,
         BattleRuntime? battle = null,
         SceneWorld? economyWorld = null)
     {
@@ -34,10 +35,10 @@ public static class DirectorCommands
                     var scenarioName = ctx.GetString("scenario");
                     if (!string.IsNullOrWhiteSpace(scenarioName))
                     {
-                        if (scenarios == null || battleConfig == null || battle == null)
+                        if (scenarios == null || battleConfig == null || balanceConfig == null || battle == null)
                             return CommandResult.Fail("剧本服务未装配");
                         var snap = scenarios.Load(scenarioName);
-                        scenarios.Apply(snap, battleConfig, weapons, economyWorld);
+                        scenarios.Apply(snap, battleConfig, balanceConfig, weapons, economyWorld);
                         battle.ReloadConfiguration();
                         seed = ctx.Has("seed") ? seed : snap.Seed;
                     }

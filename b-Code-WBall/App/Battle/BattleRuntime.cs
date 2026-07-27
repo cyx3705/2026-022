@@ -23,6 +23,7 @@ public sealed class BattleRuntime
     private readonly SceneWorld _economyWorld;
     private readonly SceneWorld _battleWorld;
     private readonly BattleConfigStore _config;
+    private readonly BalanceConfigStore _balance;
     private readonly WeaponCatalog _weapons;
     private readonly IShellLog _log;
     private readonly Dictionary<string, double> _fireCooldown = new(StringComparer.OrdinalIgnoreCase);
@@ -39,11 +40,13 @@ public sealed class BattleRuntime
         SceneWorld battleWorld,
         BattleConfigStore config,
         WeaponCatalog weapons,
-        IShellLog log)
+        IShellLog log,
+        BalanceConfigStore? balance = null)
     {
         _economyWorld = economyWorld;
         _battleWorld = battleWorld;
         _config = config;
+        _balance = balance ?? BalanceConfigStore.CreateMemory(new BalanceConfig(), log);
         _weapons = weapons;
         _log = log;
         Reset(economyWorld.Seed);
@@ -112,7 +115,20 @@ public sealed class BattleRuntime
 
     /// <summary>v2.12.3 NB-02:总弹药 = 小球池 + 大球队列数值和。</summary>
     public long AmmoTotalOf(Faction turret) =>
-        turret.SmallAmmo + turret.Ammo.Sum(shell => shell.Value);
+        SaturatingAdd(turret.SmallAmmo, turret.QueuedAmmoValue);
+
+    /// <summary>v3.2:当前小球池对应的升格弹积分。</summary>
+    public int SmallPackValue(long ammo)
+    {
+        var config = _balance.Current;
+        if (config.SmallPackThreshold <= 0 || ammo < config.SmallPackThreshold)
+            return 1;
+        var ratio = Math.Max(2, config.SmallPackRatio);
+        var level = 1 + (int)Math.Floor(Math.Log(
+            Math.Max(1, ammo / (double)config.SmallPackThreshold), ratio));
+        var value = Math.Pow(ratio, Math.Max(1, level));
+        return (int)Math.Clamp(value, 2, config.SmallPackMax);
+    }
 
     public int TerritoryChecksum()
     {
@@ -143,6 +159,8 @@ public sealed class BattleRuntime
         _battleWorld.SetWorldSize(_config.Arena.Width, _config.Arena.Height, markDirty: false);
         _battleWorld.GravityG = _config.Arena.GravityG;
         _battleWorld.BallCollisionEnabled = _config.Arena.BallCollision;
+        _battleWorld.WallRestitution = _balance.Current.WallRestitution;
+        _battleWorld.BallRestitution = _balance.Current.BallRestitution;
         _battleWorld.Seed = seed;
 
         _economyWorld.Factions.Clear();
@@ -160,7 +178,7 @@ public sealed class BattleRuntime
                     ? "直射"
                     : _config.Arena.InitialShellWeapon.Trim();
                 for (var i = 0; i < Math.Max(0, _config.Arena.InitialShellCount); i++)
-                    turret.Ammo.Enqueue(new AmmoShell(preloadValue, preloadWeapon));
+                    turret.EnqueueAmmo(new AmmoShell(preloadValue, preloadWeapon));
             }
         }
         _economyWorld.Seed = seed;
@@ -253,8 +271,12 @@ public sealed class BattleRuntime
                 {
                     Fire(turret.Id);
                     // v2.12.3 NB-03:大球出膛间隔随队列长度缩短(弹药越多打得越快)
+                    var balance = _balance.Current;
                     var interval = TerritoryMode
-                        ? Math.Max(0.08, turret.Firepower.FireIntervalSec / (1 + turret.Ammo.Count * 0.25))
+                        ? Math.Max(
+                            balance.ShellIntervalFloorSec,
+                            turret.Firepower.FireIntervalSec
+                            / (1 + turret.Ammo.Count * balance.ShellIntervalAmmoFactor))
                         : Math.Max(0.05, turret.Firepower.FireIntervalSec);
                     _fireCooldown[turret.Id] = interval;
                 }
@@ -370,7 +392,8 @@ public sealed class BattleRuntime
         if (turret.Ammo.Count == 0)
             return 0;
 
-        var shell = turret.Ammo.Dequeue();
+        if (!turret.TryDequeueAmmo(out var shell))
+            return 0;
         if (!_weapons.TryResolve(shell.WeaponName, out var weapon) || !weapon.Enabled)
             weapon = ResolveFireWeapon(turret, null);
 
@@ -423,18 +446,20 @@ public sealed class BattleRuntime
 
         // v2.12.3 NB-03:小球射速随池值加猛,弹药囤积可被打空
         var frozen = turret.BarrelFreezeRemaining > 0;
-        var rate = Math.Min(90, 6 + turret.SmallAmmo * 0.15);
+        var config = _balance.Current;
+        var rate = Math.Min(config.SmallRateMax, config.SmallRateBase + turret.SmallAmmo * config.SmallRatePerAmmo);
         if (frozen)
-            rate = Math.Min(150, rate * 2);
+            rate = Math.Min(config.SmallRateFrozenMax, rate * config.SmallRateFrozenFactor);
         turret.SmallFireCarry += rate * dt;
         while (turret.SmallFireCarry >= 1 && turret.SmallAmmo > 0)
         {
             turret.SmallFireCarry -= 1;
-            var spreadDeg = frozen ? 1.5 : 8.0;
+            var spreadDeg = frozen ? config.SmallSpreadFrozenDeg : config.SmallSpreadDeg;
             var angle = turret.BarrelAngleDeg * Math.PI / 180
                 + (_battleWorld.Rng.NextDouble() - 0.5) * spreadDeg * Math.PI / 180;
-            SpawnSmallBall(turret, angle);
-            turret.SmallAmmo--;
+            var pack = Math.Min(SmallPackValue(turret.SmallAmmo), (int)Math.Min(int.MaxValue, turret.SmallAmmo));
+            SpawnSmallBall(turret, angle, pack);
+            turret.SmallAmmo -= pack;
         }
         EnforceProjectileLimit();
     }
@@ -442,20 +467,25 @@ public sealed class BattleRuntime
     /// <summary>v2.12 ST-03:齐射瞬发 — 360° 均匀环射一圈后回到连射态。</summary>
     private void FireVolleyRing(Faction turret)
     {
-        var count = (int)Math.Min(24, turret.SmallAmmo);
+        var count = (int)Math.Min(_balance.Current.VolleyRingCount, turret.SmallAmmo);
         if (count <= 0)
             return;
         var phase = _battleWorld.Rng.NextDouble() * Math.PI * 2;
         for (var index = 0; index < count; index++)
-            SpawnSmallBall(turret, phase + index * Math.PI * 2 / count);
+            SpawnSmallBall(turret, phase + index * Math.PI * 2 / count, 1);
         turret.SmallAmmo -= count;
         EnforceProjectileLimit();
     }
 
-    private void SpawnSmallBall(Faction turret, double angle)
+    private void SpawnSmallBall(Faction turret, double angle, int value)
     {
-        var size = ArenaFormulas.SmallBallSize(_config.Arena, _cellSize);
-        var speed = ArenaFormulas.SmallBallSpeed(_config.Arena);
+        var packed = Math.Max(1, value);
+        var size = packed > 1
+            ? ShellSizeFor(packed)
+            : ArenaFormulas.SmallBallSize(_config.Arena, _cellSize);
+        var speed = packed > 1 && !_balance.Current.SmallPackSpeedFollowsSmall
+            ? ShellSpeedFor(_config.Arena.SmallBallSpeed, packed, 0.5)
+            : ArenaFormulas.SmallBallSpeed(_config.Arena);
         var startDistance = turret.TurretRadius + size + 3;
         _battleWorld.Balls.Add(new Ball
         {
@@ -466,13 +496,13 @@ public sealed class BattleRuntime
             Vy = Math.Sin(angle) * speed,
             Color = turret.Color,
             Size = size,
-            Weight = 1,
+            Weight = packed > 1 ? ShellWeightFor(packed) : 1,
             Projectile = new ProjectileState
             {
                 OwnerFactionId = turret.Id,
                 WeaponName = "小球",
-                Damage = 1,
-                CapturesLeft = 1,
+                Damage = packed,
+                CapturesLeft = packed,
             },
         });
     }
@@ -543,32 +573,38 @@ public sealed class BattleRuntime
     /// <summary>v2.12.4 TK-03:左侧同色经济球(带倍率)与弹药库存货统统化作大球,360° 射出。</summary>
     private void DeathBurst(Faction turret)
     {
+        var config = _balance.Current;
         var payloads = new List<(long Value, string Weapon)>();
-        while (turret.Ammo.Count > 0)
+        while (turret.TryDequeueAmmo(out var shell))
         {
-            var shell = turret.Ammo.Dequeue();
-            payloads.Add((shell.Value, shell.WeaponName));
+            if (config.EmberFromAmmo)
+                payloads.Add((shell.Value, shell.WeaponName));
         }
         if (turret.SmallAmmo > 0)
         {
-            payloads.Add((turret.SmallAmmo, "小球"));
+            if (config.EmberFromAmmo)
+                payloads.Add((turret.SmallAmmo, "小球"));
             turret.SmallAmmo = 0;
         }
-        var color = FactionBoard.NormalizeColor(turret.Color);
-        for (var index = _economyWorld.Balls.Count - 1; index >= 0; index--)
+        if (config.EmberDrainEconomy)
         {
-            var economyBall = _economyWorld.Balls[index];
-            if (!FactionBoard.NormalizeColor(economyBall.Color)
-                    .Equals(color, StringComparison.OrdinalIgnoreCase))
-                continue;
-            payloads.Add((Math.Max(1, economyBall.Multiplier), "大球"));
-            _economyWorld.Balls.RemoveAt(index);
+            var color = FactionBoard.NormalizeColor(turret.Color);
+            for (var index = _economyWorld.Balls.Count - 1; index >= 0; index--)
+            {
+                var economyBall = _economyWorld.Balls[index];
+                if (!FactionBoard.NormalizeColor(economyBall.Color)
+                        .Equals(color, StringComparison.OrdinalIgnoreCase))
+                    continue;
+                payloads.Add((Math.Max(1, economyBall.Multiplier), "大球"));
+                _economyWorld.Balls.RemoveAt(index);
+            }
         }
 
         foreach (var (value, weapon) in payloads)
         {
             var angle = _battleWorld.Rng.NextDouble() * Math.PI * 2;
-            var speed = 150 + _battleWorld.Rng.NextDouble() * 250;
+            var speed = config.EmberSpeedMin
+                        + _battleWorld.Rng.NextDouble() * (config.EmberSpeedMax - config.EmberSpeedMin);
             var size = ShellSizeFor(value);
             _battleWorld.Balls.Add(new Ball
             {
@@ -810,11 +846,13 @@ public sealed class BattleRuntime
                     continue;
 
                 // v2.12.4 TK-01:护罩失守后,任意敌球触碰炮台本体即摧毁
-                var victim = Turrets.FirstOrDefault(t =>
-                    t.Alive
-                    && !t.Id.Equals(projectile.OwnerFactionId, StringComparison.OrdinalIgnoreCase)
-                    && DistanceSquared(ball.X, ball.Y, t.TurretX, t.TurretY)
-                        <= Math.Pow(ball.Size + t.TurretRadius, 2));
+                var victim = _balance.Current.ContactKillEnabled
+                    ? Turrets.FirstOrDefault(t =>
+                        t.Alive
+                        && !t.Id.Equals(projectile.OwnerFactionId, StringComparison.OrdinalIgnoreCase)
+                        && DistanceSquared(ball.X, ball.Y, t.TurretX, t.TurretY)
+                            <= Math.Pow(ball.Size + t.TurretRadius, 2))
+                    : null;
                 if (victim != null)
                     Kill(victim.Id);
 
@@ -844,8 +882,12 @@ public sealed class BattleRuntime
         if (balls.Count < 2)
             return;
 
-        // 步长须覆盖最大光晕和(1.6×(50+50)=160),保证相邻桶即可命中
-        const double step = 160;
+        // 步长随光晕与当前最大弹体推导，调大光晕后仍只需查相邻桶且不会漏检。
+        var config = _balance.Current;
+        var maxRadius = Math.Max(
+            ArenaFormulas.SmallBallSize(_config.Arena, _cellSize),
+            _cellSize * _config.Arena.ShellSizeMaxCells);
+        var step = Math.Max(1, config.HaloReachFactor * 2 * maxRadius);
         var buckets = new Dictionary<(int Col, int Row), List<Ball>>();
         foreach (var ball in balls)
         {
@@ -882,7 +924,7 @@ public sealed class BattleRuntime
                             continue;
 
                         // HD-01:光晕(1.6×半径)相触即算接触
-                        var reach = (ball.Size + other.Size) * 1.6;
+                        var reach = (ball.Size + other.Size) * config.HaloReachFactor;
                         if (DistanceSquared(ball.X, ball.Y, other.X, other.Y) > reach * reach)
                             continue;
 
@@ -893,6 +935,8 @@ public sealed class BattleRuntime
 
                         if (sameOwner)
                         {
+                            if (!config.MergeSameOwnerSmall)
+                                continue;
                             // HD-06:自家小球融入自家大球(大球间不融合)
                             dead ??= [];
                             if (v1 == 1 && v2 > 1)
@@ -915,7 +959,7 @@ public sealed class BattleRuntime
                         // HD-02:同步等量研磨 — 速率随较大球,单帧不超过较小方余值(1:1 守恒)
                         var drain = (int)Math.Min(
                             Math.Min(v1, v2),
-                            Math.Max(1, Math.Round(Math.Max(v1, v2) * 2.0 * dt)));
+                            Math.Max(1, Math.Round(Math.Max(v1, v2) * config.GrindRatePerSecond * dt)));
                         mine.CapturesLeft = v1 - drain;
                         theirs.CapturesLeft = v2 - drain;
                         SyncShellSize(ball);
@@ -967,7 +1011,9 @@ public sealed class BattleRuntime
                 // v2.12.2 HD-05:自家小球**飞回**碰自家护罩 → 转化为护盾;
                 // 出膛外飞的放行(否则出膛点即在护罩内,小球攻势会被整体吞掉)
                 // v2.12.4 TK-07:决胜时刻后转化关闭
-                if (remaining <= 1 && !SuddenDeath)
+                if (remaining <= 1
+                    && _balance.Current.SelfShieldRefundEnabled
+                    && (!SuddenDeath || !_balance.Current.SuddenDeathShieldBlock))
                 {
                     var towardTurret = ball.Vx * (turret.TurretX - ball.X)
                         + ball.Vy * (turret.TurretY - ball.Y);
@@ -1001,7 +1047,7 @@ public sealed class BattleRuntime
             SyncShellSize(ball);
 
             // v2.12.5 BS-01:破盾直入 — 护盾被本弹打穿则不反弹,余值继续压向本体触杀
-            if (turret.Shield <= 0)
+            if (turret.Shield <= 0 && _balance.Current.ShieldBreakthrough)
                 return false;
 
             // 护盾仍在:沿法线反弹并推出护罩
@@ -1087,10 +1133,13 @@ public sealed class BattleRuntime
 
     private void RegenerateShields(double dt)
     {
-        if (SuddenDeath)
+        var config = _balance.Current;
+        if (SuddenDeath && config.SuddenDeathShieldBlock)
             return;
-        foreach (var turret in Turrets.Where(x => x.Alive && x.Firepower.ShieldGain > 0))
-            turret.Shield = Math.Min(turret.MaxShield, turret.Shield + turret.Firepower.ShieldGain * dt);
+        if (config.ShieldRegenPerSecond <= 0)
+            return;
+        foreach (var turret in Turrets.Where(x => x.Alive))
+            turret.Shield = Math.Min(turret.MaxShield, turret.Shield + config.ShieldRegenPerSecond * dt);
     }
 
     private void EnforceProjectileLimit()
@@ -1106,6 +1155,30 @@ public sealed class BattleRuntime
     {
         if (WinnerId != null)
             return;
+
+        var hardLimit = _balance.Current.HardTimeLimitSeconds;
+        if (hardLimit > 0 && ElapsedSeconds + 1e-9 >= hardLimit)
+        {
+            var ranked = Turrets
+                .Select((turret, index) => new
+                {
+                    Turret = turret,
+                    Remaining = TerritoryMode && index < _territoryOwned.Length
+                        ? _territoryOwned[index]
+                        : turret.Hp,
+                })
+                .OrderByDescending(x => x.Remaining)
+                .ToList();
+            WinnerId = ranked.Count == 0 || ranked.Count > 1
+                && Math.Abs(ranked[0].Remaining - ranked[1].Remaining) < 1e-9
+                    ? "draw"
+                    : ranked[0].Turret.Id;
+            AutomaticFire = false;
+            Raise("ended", WinnerId == "draw"
+                ? $"硬性时限 {hardLimit:0.###}s 到达,剩余领地相同,平局"
+                : $"硬性时限 {hardLimit:0.###}s 到达,按剩余领地判胜: {WinnerId}", WinnerId);
+            return;
+        }
 
         // v2.12.4 TK-05:活跃 = 炮台在或余烬弹在;只剩一家活跃即胜者
         var turrets = Turrets;
@@ -1150,5 +1223,17 @@ public sealed class BattleRuntime
         var dx = ax - bx;
         var dy = ay - by;
         return dx * dx + dy * dy;
+    }
+
+    private static long SaturatingAdd(long left, long right)
+    {
+        try
+        {
+            return checked(left + right);
+        }
+        catch (OverflowException)
+        {
+            return long.MaxValue;
+        }
     }
 }

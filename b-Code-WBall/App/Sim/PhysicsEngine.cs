@@ -113,7 +113,7 @@ public static class PhysicsEngine
         var r = ball.Size;
         var maxX = Math.Max(r, world.WorldWidth - r);
         var maxY = Math.Max(r, world.WorldHeight - r);
-        const double restitution = 0.55;
+        var restitution = Math.Clamp(world.WallRestitution, 0, 1);
 
         if (ball.X < r)
         {
@@ -366,7 +366,7 @@ public static class PhysicsEngine
                 if (velAlong > 0)
                     continue;
 
-                var e = 0.85;
+                var e = Math.Clamp(world.BallRestitution, 0, 1);
                 var jImpulse = -(1 + e) * velAlong / (1 / ma + 1 / mb);
                 var ix = jImpulse * nx;
                 var iy = jImpulse * ny;

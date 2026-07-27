@@ -106,6 +106,7 @@ public sealed class BattleConfigStore
     private readonly string _turretsPath;
     private readonly string _arenaPath;
     private readonly IShellLog _log;
+    private readonly bool _memoryOnly;
 
     public BattleConfigStore(string dataRoot, IShellLog log)
     {
@@ -115,10 +116,31 @@ public sealed class BattleConfigStore
         Reload();
     }
 
+    private BattleConfigStore(
+        IReadOnlyList<TurretDefinition> turrets,
+        ArenaLayoutConfig arena,
+        IShellLog log)
+    {
+        _turretsPath = "";
+        _arenaPath = "";
+        _log = log;
+        _memoryOnly = true;
+        Turrets = JsonSerializer.Deserialize<List<TurretDefinition>>(
+            JsonSerializer.Serialize(turrets, JsonOptions), JsonOptions) ?? [];
+        Arena = JsonSerializer.Deserialize<ArenaLayoutConfig>(
+            JsonSerializer.Serialize(arena, JsonOptions), JsonOptions) ?? new ArenaLayoutConfig();
+        Validate(Turrets, Arena);
+    }
+
     public IReadOnlyList<TurretDefinition> Turrets { get; private set; } = [];
     public ArenaLayoutConfig Arena { get; private set; } = new();
     public string TurretsPath => _turretsPath;
     public string ArenaPath => _arenaPath;
+
+    public static BattleConfigStore CreateMemory(
+        IReadOnlyList<TurretDefinition> turrets,
+        ArenaLayoutConfig arena,
+        IShellLog log) => new(turrets, arena, log);
 
     public void Replace(IReadOnlyList<TurretDefinition> turrets, ArenaLayoutConfig arena)
     {
@@ -156,6 +178,8 @@ public sealed class BattleConfigStore
 
     public void Reload()
     {
+        if (_memoryOnly)
+            return;
         EnsureSeedFiles();
         try
         {
@@ -178,6 +202,8 @@ public sealed class BattleConfigStore
 
     public void Save()
     {
+        if (_memoryOnly)
+            return;
         File.WriteAllText(_turretsPath, JsonSerializer.Serialize(Turrets, JsonOptions));
         File.WriteAllText(_arenaPath, JsonSerializer.Serialize(Arena, JsonOptions));
     }

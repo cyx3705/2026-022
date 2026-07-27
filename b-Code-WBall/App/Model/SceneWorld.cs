@@ -65,6 +65,8 @@ public sealed class SceneWorld
 
     public bool IsPlaying { get; set; }
     public bool BallCollisionEnabled { get; set; } = true;
+    public double WallRestitution { get; set; } = 0.55;
+    public double BallRestitution { get; set; } = 0.85;
     public bool TrailEnabled { get; set; } = false;
     public int TrailLength { get; set; } = 24;
     public double TeleportFlashSeconds { get; set; } = 0.35;

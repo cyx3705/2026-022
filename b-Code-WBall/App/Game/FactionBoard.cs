@@ -11,6 +11,33 @@ public sealed class Faction
     /// <summary>v2.10:弹药队列(领地模式火力来源;上限由结算方控制)。</summary>
     public Queue<AmmoShell> Ammo { get; } = new();
 
+    /// <summary>v3.2:队列积分增量值，避免 HUD 每帧遍历长队列。</summary>
+    public long QueuedAmmoValue { get; private set; }
+
+    /// <summary>v3.2:防 OOM 硬顶只告警一次。</summary>
+    public bool AmmoGuardWarned { get; set; }
+
+    public void EnqueueAmmo(AmmoShell shell)
+    {
+        Ammo.Enqueue(shell);
+        QueuedAmmoValue = SaturatingAdd(QueuedAmmoValue, Math.Max(1, shell.Value));
+    }
+
+    public bool TryDequeueAmmo(out AmmoShell shell)
+    {
+        if (!Ammo.TryDequeue(out shell))
+            return false;
+        QueuedAmmoValue = Math.Max(0, QueuedAmmoValue - Math.Max(1, shell.Value));
+        return true;
+    }
+
+    public void ClearAmmo()
+    {
+        Ammo.Clear();
+        QueuedAmmoValue = 0;
+        AmmoGuardWarned = false;
+    }
+
     /// <summary>v2.11:小球弹药库 — 小球/齐射/直射三槽共池的数值池。</summary>
     public long SmallAmmo { get; set; }
 
@@ -45,6 +72,18 @@ public sealed class Faction
     public double BarrelAngleDeg { get; set; }
     public double BarrelRpm { get; set; } = 6;
     public FirepowerState Firepower { get; set; } = new();
+
+    private static long SaturatingAdd(long left, long right)
+    {
+        try
+        {
+            return checked(left + right);
+        }
+        catch (OverflowException)
+        {
+            return long.MaxValue;
+        }
+    }
 }
 
 public sealed class FirepowerState

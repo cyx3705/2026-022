@@ -13,6 +13,7 @@ public sealed class ScenarioSnapshot
     public string? EconomyScenePath { get; set; }
     public List<TurretDefinition> Turrets { get; set; } = [];
     public ArenaLayoutConfig Arena { get; set; } = new();
+    public BalanceConfig? Balance { get; set; }
     public List<WeaponDefinition> Weapons { get; set; } = [];
     public string AppVersion { get; set; } = "2.0.0";
 }
@@ -81,10 +82,12 @@ public sealed class ScenarioStore
     public void Apply(
         ScenarioSnapshot snapshot,
         BattleConfigStore battleConfig,
+        BalanceConfigStore balanceConfig,
         WeaponCatalog weapons,
         SceneWorld? economyWorld = null)
     {
         battleConfig.Replace(snapshot.Turrets, snapshot.Arena);
+        balanceConfig.Replace(snapshot.Balance ?? new BalanceConfig());
         File.WriteAllText(weapons.Path, JsonSerializer.Serialize(snapshot.Weapons, JsonOptions));
         weapons.Reload();
         if (economyWorld != null)
@@ -112,6 +115,7 @@ public sealed class ScenarioStore
         string name,
         int seed,
         BattleConfigStore battleConfig,
+        BalanceConfigStore balanceConfig,
         WeaponCatalog weapons,
         string? economyScenePath)
     {
@@ -122,6 +126,7 @@ public sealed class ScenarioStore
             EconomyScenePath = economyScenePath,
             Turrets = battleConfig.Turrets.Select(CloneTurret).ToList(),
             Arena = CloneArena(battleConfig.Arena),
+            Balance = BalanceConfigStore.Clone(balanceConfig.Current),
             Weapons = weapons.Weapons.Select(CloneWeapon).ToList(),
         };
     }

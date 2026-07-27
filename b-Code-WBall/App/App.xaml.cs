@@ -65,17 +65,20 @@ public partial class App : Application
         }
 
         var weapons = new WeaponCatalog(paths.Root, log);
-        var economyBridge = new EconomyBridge(weapons, log);
+        var balanceConfig = new BalanceConfigStore(paths.Root, log);
+        var economyBridge = new EconomyBridge(weapons, log, balanceConfig);
         world.Settlements = economyBridge;
         var battleConfig = new BattleConfigStore(paths.Root, log);
         var scenarios = new ScenarioStore(workspace.Root, log);
+        var presets = new PresetStore(paths.Root, log);
+        var simulator = new BalanceSimulator(world, battleConfig, weapons, log);
 
         var projection = new PropertyProjection(sqlite, world, paths.Root);
         var dataService = new WBallDataService(sqlite, projection);
         _data = dataService;
 
         var workspaceViews = new WBallWorkspaceViews(
-            world, log, paths.Root, battleConfig, weapons, economyBridge);
+            world, log, paths.Root, battleConfig, balanceConfig, presets, weapons, economyBridge);
         var recorder = new StageRecorder(
             workspaceViews.StageView,
             workspaceViews.Stage,
@@ -86,7 +89,7 @@ public partial class App : Application
         var config = new ShellConfig
         {
             AppName = "WBall",
-            AppVersion = "3.1.0",
+            AppVersion = "3.2.0",
             DataService = dataService,
             Workspace = workspace,
             MainContent = workspaceViews.MainContent,
@@ -109,12 +112,22 @@ public partial class App : Application
                 battleConfig,
                 weapons,
                 workspaceViews.Stage);
+            BalanceCommands.Register(
+                registry,
+                balanceConfig,
+                battleConfig,
+                presets,
+                simulator,
+                workspaceViews.Battle,
+                workspaceViews.Director,
+                workspaceViews.BattleWorld);
             DirectorCommands.Register(
                 registry,
                 workspaceViews.Director,
                 weapons,
                 scenarios,
                 battleConfig,
+                balanceConfig,
                 workspaceViews.Battle,
                 world);
             HudCommands.Register(registry, workspaceViews.Stage, workspaceViews.StageView.Hud, workspaceViews.Director);
@@ -122,6 +135,7 @@ public partial class App : Application
                 registry,
                 scenarios,
                 battleConfig,
+                balanceConfig,
                 weapons,
                 workspaceViews.Battle,
                 workspaceViews.Director,
@@ -131,6 +145,7 @@ public partial class App : Application
                 workspaceViews.Stage,
                 scenarios,
                 battleConfig,
+                balanceConfig,
                 weapons,
                 workspaceViews.Battle,
                 workspaceViews.Director,
@@ -297,6 +312,7 @@ public partial class App : Application
                     { "type": "label", "id": "mlbl", "label": "更多", "default": "低频操作走控制台" },
                     { "type": "button", "label": "炮台一览", "command": "turret.list" },
                     { "type": "button", "label": "对战区设置", "command": "win.show name=arenaset" },
+                    { "type": "button", "label": "战斗平衡", "command": "win.show name=balance" },
                     { "type": "button", "label": "对战区一览", "command": "arena.config" },
                     { "type": "button", "label": "编辑工具", "command": "panel.show id=editor" },
                     { "type": "button", "label": "调试窗", "command": "win.show name=objdebug" }
