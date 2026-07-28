@@ -39,31 +39,11 @@ public static class BalanceCommands
             Name = "balance.rate",
             Summary = "查询或设置大球/小球火力节奏",
             Example = "balance.rate smallBase=6 smallPerAmmo=0.15 smallMax=90 shellFactor=0.25",
-            Parameters = Specs(
-                ("shellFactor", ParamType.Double), ("shellFloor", ParamType.Double),
-                ("smallBase", ParamType.Double), ("smallPerAmmo", ParamType.Double), ("smallMax", ParamType.Double),
-                ("frozenFactor", ParamType.Double), ("frozenMax", ParamType.Double),
-                ("spread", ParamType.Double), ("frozenSpread", ParamType.Double),
-                ("volley", ParamType.Int), ("pending", ParamType.Int),
-                ("freezePerValue", ParamType.Double), ("freezeMax", ParamType.Double), ("ammoGuard", ParamType.Int)),
+            Parameters = SpecsFor("balance.rate"),
             Handler = CommandDescriptor.Sync(ctx =>
             {
                 var c = store.Current;
-                var changed = false;
-                changed |= SetD(ctx, "shellFactor", "shellIntervalAmmoFactor", x => c.ShellIntervalAmmoFactor = x);
-                changed |= SetD(ctx, "shellFloor", "shellIntervalFloorSec", x => c.ShellIntervalFloorSec = x);
-                changed |= SetD(ctx, "smallBase", "smallRateBase", x => c.SmallRateBase = x);
-                changed |= SetD(ctx, "smallPerAmmo", "smallRatePerAmmo", x => c.SmallRatePerAmmo = x);
-                changed |= SetD(ctx, "smallMax", "smallRateMax", x => c.SmallRateMax = x);
-                changed |= SetD(ctx, "frozenFactor", "smallRateFrozenFactor", x => c.SmallRateFrozenFactor = x);
-                changed |= SetD(ctx, "frozenMax", "smallRateFrozenMax", x => c.SmallRateFrozenMax = x);
-                changed |= SetD(ctx, "spread", "smallSpreadDeg", x => c.SmallSpreadDeg = x);
-                changed |= SetD(ctx, "frozenSpread", "smallSpreadFrozenDeg", x => c.SmallSpreadFrozenDeg = x);
-                changed |= SetI(ctx, "volley", "volleyRingCount", x => c.VolleyRingCount = x);
-                changed |= SetI(ctx, "pending", "volleyPendingMax", x => c.VolleyPendingMax = x);
-                changed |= SetD(ctx, "freezePerValue", "freezeSecondsPerValue", x => c.FreezeSecondsPerValue = x);
-                changed |= SetD(ctx, "freezeMax", "freezeMaxSeconds", x => c.FreezeMaxSeconds = x);
-                changed |= SetI(ctx, "ammoGuard", "ammoQueueGuard", x => c.AmmoQueueGuard = x);
+                var changed = ApplyFields(ctx, "balance.rate", c);
                 if (changed) store.Save();
                 return CommandResult.Ok(
                     $"shellFactor={N(c.ShellIntervalAmmoFactor)} shellFloor={N(c.ShellIntervalFloorSec)} "
@@ -83,16 +63,11 @@ public static class BalanceCommands
             Name = "balance.pack",
             Summary = "查询或设置小球升格梯度(threshold=0 关闭)",
             Example = "balance.pack threshold=40000 ratio=2 max=64 followSmall=true",
-            Parameters = Specs(("threshold", ParamType.Double), ("ratio", ParamType.Int),
-                ("max", ParamType.Int), ("followSmall", ParamType.Bool)),
+            Parameters = SpecsFor("balance.pack"),
             Handler = CommandDescriptor.Sync(ctx =>
             {
                 var c = store.Current;
-                var changed = false;
-                changed |= SetL(ctx, "threshold", "smallPackThreshold", x => c.SmallPackThreshold = x);
-                changed |= SetI(ctx, "ratio", "smallPackRatio", x => c.SmallPackRatio = x);
-                changed |= SetI(ctx, "max", "smallPackMax", x => c.SmallPackMax = x);
-                changed |= SetB(ctx, "followSmall", x => c.SmallPackSpeedFollowsSmall = x);
+                var changed = ApplyFields(ctx, "balance.pack", c);
                 if (changed) store.Save();
                 var pools = battle.Turrets.Select(x => $"{x.Id}:{x.SmallAmmo}→{battle.SmallPackValue(x.SmallAmmo)}");
                 return CommandResult.Ok(
@@ -109,12 +84,12 @@ public static class BalanceCommands
             Name = "balance.duel",
             Summary = "查询或设置光晕对消、研磨和同色融合",
             Example = "balance.duel halo=1.6 grind=2 merge=true",
-            Parameters = Specs(("halo", ParamType.Double), ("grind", ParamType.Double), ("merge", ParamType.Bool)),
+            // merge 是兼容别名(同时写两个属性),不对应单一字段,单独声明
+            Parameters = SpecsFor("balance.duel", ("merge", ParamType.Bool)),
             Handler = CommandDescriptor.Sync(ctx =>
             {
                 var c = store.Current;
-                var changed = SetD(ctx, "halo", "haloReachFactor", x => c.HaloReachFactor = x)
-                              | SetD(ctx, "grind", "grindRatePerSecond", x => c.GrindRatePerSecond = x);
+                var changed = ApplyFields(ctx, "balance.duel", c);
                 if (ctx.Has("merge"))
                 {
                     var enabled = ctx.GetBool("merge");
@@ -135,22 +110,14 @@ public static class BalanceCommands
             Name = "balance.assist",
             Summary = "查询或设置同阵营低速积分传递与升格小球回收",
             Example = "balance.assist enabled=true visual=true smallRate=0.25 shellRate=0.10 reach=1.20 max=100000",
-            Parameters = Specs(("enabled", ParamType.Bool), ("smallRate", ParamType.Double),
-                ("shellRate", ParamType.Double), ("reach", ParamType.Double), ("max", ParamType.Int),
-                ("visual", ParamType.Bool)),
+            Parameters = SpecsFor("balance.assist"),
             Handler = CommandDescriptor.Sync(ctx =>
             {
                 var c = store.Current;
-                var changed = SetB(ctx, "enabled", x =>
-                              {
-                                  c.FriendlyAssistEnabled = x;
-                                  c.MergeSameOwnerSmall = x;
-                              })
-                              | SetB(ctx, "visual", x => c.FriendlyAssistVisualEnabled = x)
-                              | SetD(ctx, "smallRate", "friendlyAbsorbSmallRate", x => c.FriendlyAbsorbSmallRate = x)
-                              | SetD(ctx, "shellRate", "friendlyShellTransferRate", x => c.FriendlyShellTransferRate = x)
-                              | SetD(ctx, "reach", "friendlyAssistReachFactor", x => c.FriendlyAssistReachFactor = x)
-                              | SetI(ctx, "max", "friendlyAssistMaxValue", x => c.FriendlyAssistMaxValue = x);
+                var changed = ApplyFields(ctx, "balance.assist", c);
+                // enabled 同时同步同色融入(v3.3 既有语义:助力总开关兼管 merge)
+                if (ctx.Has("enabled"))
+                    c.MergeSameOwnerSmall = c.FriendlyAssistEnabled;
                 if (changed) store.Save();
 
                 var status = battle.FriendlyAssistStatus();
@@ -171,18 +138,11 @@ public static class BalanceCommands
             Name = "balance.shield",
             Summary = "查询或设置护罩、触杀、回充和自然再生",
             Example = "balance.shield breakthrough=true contact=true refund=true suddenBlock=true slotGain=1 regen=0",
-            Parameters = Specs(("breakthrough", ParamType.Bool), ("contact", ParamType.Bool),
-                ("refund", ParamType.Bool), ("suddenBlock", ParamType.Bool),
-                ("slotGain", ParamType.Double), ("regen", ParamType.Double)),
+            Parameters = SpecsFor("balance.shield"),
             Handler = CommandDescriptor.Sync(ctx =>
             {
                 var c = store.Current;
-                var changed = SetB(ctx, "breakthrough", x => c.ShieldBreakthrough = x)
-                              | SetB(ctx, "contact", x => c.ContactKillEnabled = x)
-                              | SetB(ctx, "refund", x => c.SelfShieldRefundEnabled = x)
-                              | SetB(ctx, "suddenBlock", x => c.SuddenDeathShieldBlock = x)
-                              | SetD(ctx, "slotGain", "shieldSlotGainPerValue", x => c.ShieldSlotGainPerValue = x)
-                              | SetD(ctx, "regen", "shieldRegenPerSecond", x => c.ShieldRegenPerSecond = x);
+                var changed = ApplyFields(ctx, "balance.shield", c);
                 if (changed) store.Save();
                 return CommandResult.Ok(
                     $"breakthrough={B(c.ShieldBreakthrough)} contact={B(c.ContactKillEnabled)} "
@@ -199,15 +159,12 @@ public static class BalanceCommands
             Name = "balance.ember",
             Summary = "查询或设置余烬速度和来源",
             Example = "balance.ember speedMin=150 speedMax=400 ammo=true economy=true",
-            Parameters = Specs(("speedMin", ParamType.Double), ("speedMax", ParamType.Double),
-                ("ammo", ParamType.Bool), ("economy", ParamType.Bool)),
+            Parameters = SpecsFor("balance.ember"),
             Handler = CommandDescriptor.Sync(ctx =>
             {
+                // 先在副本上改,跨字段约束(min<=max)不成立就整批拒绝,不留半套值
                 var c = BalanceConfigStore.Clone(store.Current);
-                var changed = SetD(ctx, "speedMin", "emberSpeedMin", x => c.EmberSpeedMin = x)
-                              | SetD(ctx, "speedMax", "emberSpeedMax", x => c.EmberSpeedMax = x)
-                              | SetB(ctx, "ammo", x => c.EmberFromAmmo = x)
-                              | SetB(ctx, "economy", x => c.EmberDrainEconomy = x);
+                var changed = ApplyFields(ctx, "balance.ember", c);
                 if (c.EmberSpeedMin > c.EmberSpeedMax)
                     return CommandResult.Fail("speedMin 不得大于 speedMax");
                 if (changed) store.Replace(c);
@@ -223,21 +180,11 @@ public static class BalanceCommands
             Name = "balance.economy",
             Summary = "查询或设置经济到火力映射(主要用于 direct 模式)",
             Example = "balance.economy exponent=0.5 sizeBase=8 pierce=0.08",
-            Parameters = Specs(("exponent", ParamType.Double), ("sizeBase", ParamType.Double),
-                ("burstDamage", ParamType.Double), ("burstSpread", ParamType.Double),
-                ("pierce", ParamType.Double), ("gravitySize", ParamType.Double),
-                ("gravityDamage", ParamType.Double), ("score", ParamType.Double)),
+            Parameters = SpecsFor("balance.economy"),
             Handler = CommandDescriptor.Sync(ctx =>
             {
                 var c = store.Current;
-                var changed = SetD(ctx, "exponent", "intensityExponent", x => c.IntensityExponent = x)
-                              | SetD(ctx, "sizeBase", "sizeGainBase", x => c.SizeGainBase = x)
-                              | SetD(ctx, "burstDamage", "burstDamageGain", x => c.BurstDamageGain = x)
-                              | SetD(ctx, "burstSpread", "burstSpreadGain", x => c.BurstSpreadGain = x)
-                              | SetD(ctx, "pierce", "pierceDamageGain", x => c.PierceDamageGain = x)
-                              | SetD(ctx, "gravitySize", "gravitySizeGain", x => c.GravitySizeGain = x)
-                              | SetD(ctx, "gravityDamage", "gravityDamageGain", x => c.GravityDamageGain = x)
-                              | SetD(ctx, "score", "scoreDamageGain", x => c.ScoreDamageGain = x);
+                var changed = ApplyFields(ctx, "balance.economy", c);
                 if (changed) store.Save();
                 return CommandResult.Ok(
                     $"exponent={N(c.IntensityExponent)} sizeBase={N(c.SizeGainBase)} "
@@ -255,12 +202,11 @@ public static class BalanceCommands
             Name = "balance.physics",
             Summary = "查询或设置右世界墙面/弹体弹性",
             Example = "balance.physics wall=0.55 ball=0.85",
-            Parameters = Specs(("wall", ParamType.Double), ("ball", ParamType.Double)),
+            Parameters = SpecsFor("balance.physics"),
             Handler = CommandDescriptor.Sync(ctx =>
             {
                 var c = store.Current;
-                var changed = SetD(ctx, "wall", "wallRestitution", x => c.WallRestitution = x)
-                              | SetD(ctx, "ball", "ballRestitution", x => c.BallRestitution = x);
+                var changed = ApplyFields(ctx, "balance.physics", c);
                 if (changed) store.Save();
                 world.WallRestitution = c.WallRestitution;
                 world.BallRestitution = c.BallRestitution;
@@ -276,13 +222,11 @@ public static class BalanceCommands
             Name = "balance.round",
             Summary = "查询或设置倒计时、结算展示和硬性时限",
             Example = "balance.round countdown=1 settle=2 limit=0",
-            Parameters = Specs(("countdown", ParamType.Double), ("settle", ParamType.Double), ("limit", ParamType.Double)),
+            Parameters = SpecsFor("balance.round"),
             Handler = CommandDescriptor.Sync(ctx =>
             {
                 var c = store.Current;
-                var changed = SetD(ctx, "countdown", "countdownSeconds", x => c.CountdownSeconds = x)
-                              | SetD(ctx, "settle", "settleSeconds", x => c.SettleSeconds = x)
-                              | SetD(ctx, "limit", "hardTimeLimitSeconds", x => c.HardTimeLimitSeconds = x);
+                var changed = ApplyFields(ctx, "balance.round", c);
                 if (changed) store.Save();
                 return CommandResult.Ok($"countdown={N(c.CountdownSeconds)} settle={N(c.SettleSeconds)} limit={N(c.HardTimeLimitSeconds)}");
             }),
@@ -440,32 +384,57 @@ public static class BalanceCommands
     private static IReadOnlyList<ParameterSpec> Specs(params (string Name, ParamType Type)[] values) =>
         values.Select(x => new ParameterSpec { Name = x.Name, Description = x.Name, Type = x.Type }).ToList();
 
-    private static bool SetD(CommandContext ctx, string param, string field, Action<double> apply)
+    /// <summary>
+    /// v3.4 V34-05:参数规格由字段描述符生成(顺序 = 描述符声明顺序)。
+    /// extra 用于声明不对应单一字段的兼容别名(如 balance.duel 的 merge)。
+    /// </summary>
+    private static IReadOnlyList<ParameterSpec> SpecsFor(
+        string command,
+        params (string Name, ParamType Type)[] extra)
     {
-        if (!ctx.Has(param)) return false;
-        apply(BalanceConfigStore.ClampField(field, ctx.GetDouble(param)));
-        return true;
+        var specs = BalanceFields.ForCommand(command)
+            .Select(field => new ParameterSpec
+            {
+                Name = field.Parameter,
+                Description = $"{field.Label}({field.Scope})",
+                Type = ParamTypeOf(field),
+            })
+            .ToList();
+        specs.AddRange(extra.Select(x => new ParameterSpec
+        {
+            Name = x.Name,
+            Description = x.Name,
+            Type = x.Type,
+        }));
+        return specs;
     }
 
-    private static bool SetI(CommandContext ctx, string param, string field, Action<int> apply)
+    private static ParamType ParamTypeOf(BalanceFieldDescriptor field) => field.Kind switch
     {
-        if (!ctx.Has(param)) return false;
-        apply((int)Math.Round(BalanceConfigStore.ClampField(field, ctx.GetInt(param))));
-        return true;
-    }
+        BalanceFieldKind.Bool => ParamType.Bool,
+        BalanceFieldKind.Int => ParamType.Int,
+        // long 走 Double 解析(阈值可写 4e4),与 v3.2 的 SetL 语义一致
+        _ => ParamType.Double,
+    };
 
-    private static bool SetL(CommandContext ctx, string param, string field, Action<long> apply)
+    /// <summary>
+    /// v3.4 V34-05:把命令上下文里出现的参数写进配置。夹取范围、类型取整全部由描述符负责,
+    /// 不再一条字段写一行 SetD/SetI/SetL/SetB 三元组(param/json/setter 三者手工对齐才不出错)。
+    /// </summary>
+    private static bool ApplyFields(CommandContext ctx, string command, BalanceConfig config)
     {
-        if (!ctx.Has(param)) return false;
-        apply((long)Math.Round(BalanceConfigStore.ClampField(field, ctx.GetDouble(param))));
-        return true;
-    }
-
-    private static bool SetB(CommandContext ctx, string param, Action<bool> apply)
-    {
-        if (!ctx.Has(param)) return false;
-        apply(ctx.GetBool(param));
-        return true;
+        var changed = false;
+        foreach (var field in BalanceFields.ForCommand(command))
+        {
+            if (!ctx.Has(field.Parameter))
+                continue;
+            if (field.IsBoolean)
+                field.SetBool(config, ctx.GetBool(field.Parameter));
+            else
+                field.SetNumber(config, ctx.GetDouble(field.Parameter));
+            changed = true;
+        }
+        return changed;
     }
 
     private static void ApplyPhysics(SceneWorld world, BalanceConfig config)

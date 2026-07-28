@@ -76,50 +76,11 @@ public sealed class BalanceConfigStore
         WriteIndented = true,
     };
 
-    public static readonly IReadOnlyDictionary<string, (double Min, double Max)> Ranges =
-        new Dictionary<string, (double, double)>(StringComparer.OrdinalIgnoreCase)
-        {
-            ["shellIntervalAmmoFactor"] = (0, 5),
-            ["shellIntervalFloorSec"] = (0.02, 5),
-            ["smallRateBase"] = (0, 200),
-            ["smallRatePerAmmo"] = (0, 5),
-            ["smallRateMax"] = (1, 5000),
-            ["smallRateFrozenFactor"] = (1, 10),
-            ["smallRateFrozenMax"] = (1, 900),
-            ["smallSpreadDeg"] = (0, 90),
-            ["smallSpreadFrozenDeg"] = (0, 90),
-            ["volleyRingCount"] = (4, 120),
-            ["volleyPendingMax"] = (1, 64),
-            ["freezeSecondsPerValue"] = (0, 2),
-            ["freezeMaxSeconds"] = (0, 60),
-            ["ammoQueueGuard"] = (512, 100_000_000),
-            ["smallPackThreshold"] = (0, 1_000_000_000),
-            ["smallPackRatio"] = (2, 10),
-            ["smallPackMax"] = (2, 4096),
-            ["haloReachFactor"] = (1, 4),
-            ["grindRatePerSecond"] = (0.1, 50),
-            ["friendlyAbsorbSmallRate"] = (0, 10),
-            ["friendlyShellTransferRate"] = (0, 10),
-            ["friendlyAssistReachFactor"] = (1, 3),
-            ["friendlyAssistMaxValue"] = (2, 1_000_000),
-            ["shieldSlotGainPerValue"] = (0, 1_000_000),
-            ["shieldRegenPerSecond"] = (0, 1_000_000),
-            ["emberSpeedMin"] = (10, 3000),
-            ["emberSpeedMax"] = (10, 3000),
-            ["intensityExponent"] = (0.1, 1),
-            ["sizeGainBase"] = (2, 60),
-            ["burstDamageGain"] = (0, 1),
-            ["burstSpreadGain"] = (0, 1),
-            ["pierceDamageGain"] = (0, 1),
-            ["gravitySizeGain"] = (0, 2),
-            ["gravityDamageGain"] = (0, 2),
-            ["scoreDamageGain"] = (0, 1),
-            ["wallRestitution"] = (0, 1),
-            ["ballRestitution"] = (0, 1),
-            ["countdownSeconds"] = (0, 30),
-            ["settleSeconds"] = (0, 30),
-            ["hardTimeLimitSeconds"] = (0, 7200),
-        };
+    /// <summary>
+    /// v3.4 V34-05:范围表不再在此手抄一份,改由 <see cref="BalanceFields"/> 派生。
+    /// 保留这个成员名是为了不动既有调用方。
+    /// </summary>
+    public static IReadOnlyDictionary<string, (double Min, double Max)> Ranges => BalanceFields.Ranges;
 
     private readonly string? _path;
     private readonly IShellLog _log;
@@ -190,75 +151,30 @@ public sealed class BalanceConfigStore
             File.WriteAllText(_path, JsonSerializer.Serialize(Current, JsonOptions));
     }
 
-    public static double ClampField(string field, double value) =>
-        Ranges.TryGetValue(field, out var range) ? Math.Clamp(value, range.Min, range.Max) : value;
+    public static double ClampField(string field, double value) => BalanceFields.ClampField(field, value);
 
+    /// <summary>
+    /// v3.4 V34-05:逐字段校验由描述符驱动。
+    /// 旧实现按 <c>property.Name</c> 去查 camelCase 键 —— 大小写靠字典的 OrdinalIgnoreCase 兜着,
+    /// 一旦有字段漏登记就静默跳过校验;现在漏登记会被 BalanceFields.AuditCoverage 直接抓出来。
+    /// </summary>
     public static void Validate(BalanceConfig config)
     {
-        foreach (var property in typeof(BalanceConfig).GetProperties())
+        foreach (var field in BalanceFields.All)
         {
-            if (!Ranges.TryGetValue(property.Name, out var range))
-                continue;
-            var value = Convert.ToDouble(property.GetValue(config), System.Globalization.CultureInfo.InvariantCulture);
-            if (!double.IsFinite(value) || value < range.Min || value > range.Max)
+            if (field.IsOutOfRange(config, out var value))
                 throw new InvalidDataException(
-                    $"{property.Name} 须在 {range.Min:0.###}~{range.Max:0.###}(当前 {value:0.###})");
+                    $"{field.Property} 须在 {field.Min:0.###}~{field.Max:0.###}(当前 {value:0.###})");
         }
+
+        // 跨字段约束不属于单字段描述符,显式保留
         if (config.EmberSpeedMin > config.EmberSpeedMax)
             throw new InvalidDataException("emberSpeedMin 不得大于 emberSpeedMax");
     }
 
-    public static BalanceConfig Clone(BalanceConfig source) => new()
-    {
-        ShellIntervalAmmoFactor = source.ShellIntervalAmmoFactor,
-        ShellIntervalFloorSec = source.ShellIntervalFloorSec,
-        SmallRateBase = source.SmallRateBase,
-        SmallRatePerAmmo = source.SmallRatePerAmmo,
-        SmallRateMax = source.SmallRateMax,
-        SmallRateFrozenFactor = source.SmallRateFrozenFactor,
-        SmallRateFrozenMax = source.SmallRateFrozenMax,
-        SmallSpreadDeg = source.SmallSpreadDeg,
-        SmallSpreadFrozenDeg = source.SmallSpreadFrozenDeg,
-        VolleyRingCount = source.VolleyRingCount,
-        VolleyPendingMax = source.VolleyPendingMax,
-        FreezeSecondsPerValue = source.FreezeSecondsPerValue,
-        FreezeMaxSeconds = source.FreezeMaxSeconds,
-        AmmoQueueGuard = source.AmmoQueueGuard,
-        SmallPackThreshold = source.SmallPackThreshold,
-        SmallPackRatio = source.SmallPackRatio,
-        SmallPackMax = source.SmallPackMax,
-        SmallPackSpeedFollowsSmall = source.SmallPackSpeedFollowsSmall,
-        HaloReachFactor = source.HaloReachFactor,
-        GrindRatePerSecond = source.GrindRatePerSecond,
-        MergeSameOwnerSmall = source.MergeSameOwnerSmall,
-        FriendlyAssistEnabled = source.FriendlyAssistEnabled,
-        FriendlyAssistVisualEnabled = source.FriendlyAssistVisualEnabled,
-        FriendlyAbsorbSmallRate = source.FriendlyAbsorbSmallRate,
-        FriendlyShellTransferRate = source.FriendlyShellTransferRate,
-        FriendlyAssistReachFactor = source.FriendlyAssistReachFactor,
-        FriendlyAssistMaxValue = source.FriendlyAssistMaxValue,
-        ShieldBreakthrough = source.ShieldBreakthrough,
-        ContactKillEnabled = source.ContactKillEnabled,
-        SelfShieldRefundEnabled = source.SelfShieldRefundEnabled,
-        SuddenDeathShieldBlock = source.SuddenDeathShieldBlock,
-        ShieldSlotGainPerValue = source.ShieldSlotGainPerValue,
-        ShieldRegenPerSecond = source.ShieldRegenPerSecond,
-        EmberSpeedMin = source.EmberSpeedMin,
-        EmberSpeedMax = source.EmberSpeedMax,
-        EmberFromAmmo = source.EmberFromAmmo,
-        EmberDrainEconomy = source.EmberDrainEconomy,
-        IntensityExponent = source.IntensityExponent,
-        SizeGainBase = source.SizeGainBase,
-        BurstDamageGain = source.BurstDamageGain,
-        BurstSpreadGain = source.BurstSpreadGain,
-        PierceDamageGain = source.PierceDamageGain,
-        GravitySizeGain = source.GravitySizeGain,
-        GravityDamageGain = source.GravityDamageGain,
-        ScoreDamageGain = source.ScoreDamageGain,
-        WallRestitution = source.WallRestitution,
-        BallRestitution = source.BallRestitution,
-        CountdownSeconds = source.CountdownSeconds,
-        SettleSeconds = source.SettleSeconds,
-        HardTimeLimitSeconds = source.HardTimeLimitSeconds,
-    };
+    /// <summary>
+    /// v3.4 V34-05:Clone 由字段描述符逐项复制。
+    /// 旧实现是 50 行手写赋值 —— 加字段忘了补一行,预设/剧本/试跑就会静默丢值(且不报错)。
+    /// </summary>
+    public static BalanceConfig Clone(BalanceConfig source) => BalanceFields.Clone(source);
 }

@@ -783,6 +783,29 @@ Check("hard time limit concludes", limited.Battle.WinnerId != null, limited.Batt
 Check("hard time limit does not overrun", limited.Battle.ElapsedSeconds <= 1 + 1e-9,
     $"seconds={limited.Battle.ElapsedSeconds:0.######}");
 
+// v3.4 V34-05:字段描述符必须覆盖 BalanceConfig 全部属性 —— 以后加字段忘登记,这里直接红,
+// 而不是等到预设/剧本/试跑某条路径静默丢值。
+var coverageProblems = BalanceFields.AuditCoverage();
+Check("balance field registry covers every config property", coverageProblems.Count == 0,
+    coverageProblems.Count == 0
+        ? $"fields={BalanceFields.All.Count}"
+        : string.Join(" ｜ ", coverageProblems));
+
+// Clone 走描述符后必须仍是逐字段深拷贝:改一个字段不许串到源对象。
+var cloneSource = new BalanceConfig();
+foreach (var field in BalanceFields.All.Where(x => !x.IsBoolean))
+    field.SetNumber(cloneSource, field.Min!.Value == 0 ? field.Max!.Value : field.Min!.Value);
+foreach (var field in BalanceFields.All.Where(x => x.IsBoolean))
+    field.SetBool(cloneSource, !field.GetBool(cloneSource));
+var cloned = BalanceConfigStore.Clone(cloneSource);
+var cloneMismatch = BalanceFields.All
+    .Where(f => f.IsBoolean
+        ? f.GetBool(cloned) != f.GetBool(cloneSource)
+        : Math.Abs(f.GetNumber(cloned) - f.GetNumber(cloneSource)) > 1e-9)
+    .Select(f => f.Property)
+    .ToList();
+Check("balance clone copies every field", cloneMismatch.Count == 0, string.Join(", ", cloneMismatch));
+
 // 预设只往返 arena + balance。
 var presets = new PresetStore(dataRoot, log);
 var customArena = new ArenaLayoutConfig { Width = 1200, Height = 800 };

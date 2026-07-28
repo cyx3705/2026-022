@@ -12,14 +12,13 @@ namespace WBall.Presentation;
 /// <summary>v3.2 战斗平衡命令的图形外壳。</summary>
 internal sealed class BalanceSettingsView : UserControl, ICommandBusAware
 {
-    private sealed record Field(
-        string Property,
-        string Parameter,
-        string Label,
-        string Scope,
-        bool IsBoolean = false);
-
-    private sealed record Group(string Title, string Command, IReadOnlyList<Field> Fields);
+    /// <summary>
+    /// v3.4 V34-05:控件由 <see cref="BalanceFields"/> 生成。
+    /// 此前这里有一份 50 行私有 Field 表,与范围表 / Clone / 命令 switch 各自维护 ——
+    /// 加一个字段要在四处同步登记,漏一处就是"UI 有、命令没有"或"存了读不回来"。
+    /// </summary>
+    private static IReadOnlyList<(string Group, string Command, IReadOnlyList<BalanceFieldDescriptor> Fields)> Groups
+        => BalanceFields.Groups;
 
     private readonly BalanceConfigStore _balance;
     private readonly BattleConfigStore _arena;
@@ -45,85 +44,6 @@ internal sealed class BalanceSettingsView : UserControl, ICommandBusAware
     private CommandBus? _bus;
     private CancellationTokenSource? _simulationCancellation;
 
-    private static readonly IReadOnlyList<Group> Groups =
-    [
-        new("火力节奏", "balance.rate",
-        [
-            new("ShellIntervalAmmoFactor", "shellFactor", "大球提速系数", "即时 / territory"),
-            new("ShellIntervalFloorSec", "shellFloor", "大球间隔下限(s)", "即时 / territory"),
-            new("SmallRateBase", "smallBase", "小球基础射速", "即时 / territory"),
-            new("SmallRatePerAmmo", "smallPerAmmo", "每点弹药射速", "即时 / territory"),
-            new("SmallRateMax", "smallMax", "小球射速上限", "即时 / territory"),
-            new("SmallRateFrozenFactor", "frozenFactor", "定格射速倍率", "即时 / territory"),
-            new("SmallRateFrozenMax", "frozenMax", "定格射速上限", "即时 / territory"),
-            new("SmallSpreadDeg", "spread", "小球散布(°)", "即时 / territory"),
-            new("SmallSpreadFrozenDeg", "frozenSpread", "定格散布(°)", "即时 / territory"),
-            new("VolleyRingCount", "volley", "齐射环发数", "即时 / territory"),
-            new("VolleyPendingMax", "pending", "齐射待发上限", "即时 / territory"),
-            new("FreezeSecondsPerValue", "freezePerValue", "每点定格秒数", "即时 / territory"),
-            new("FreezeMaxSeconds", "freezeMax", "定格时长上限", "即时 / territory"),
-            new("AmmoQueueGuard", "ammoGuard", "队列防 OOM 硬顶", "即时 / territory"),
-        ]),
-        new("小球升格", "balance.pack",
-        [
-            new("SmallPackThreshold", "threshold", "升格阈值", "即时 / territory; 0=关闭"),
-            new("SmallPackRatio", "ratio", "分档倍率", "即时 / territory"),
-            new("SmallPackMax", "max", "包值上限", "即时 / territory"),
-            new("SmallPackSpeedFollowsSmall", "followSmall", "沿用小球速度", "即时 / territory", true),
-        ]),
-        new("对消与融合", "balance.duel",
-        [
-            new("HaloReachFactor", "halo", "光晕范围系数", "即时 / territory"),
-            new("GrindRatePerSecond", "grind", "研磨速率", "即时 / territory"),
-        ]),
-        new("同阵营助力与回收", "balance.assist",
-        [
-            new("FriendlyAssistEnabled", "enabled", "启用低速助力", "即时 / territory", true),
-            new("FriendlyAssistVisualEnabled", "visual", "显示助力连线", "即时 / 纯视觉", true),
-            new("FriendlyAbsorbSmallRate", "smallRate", "大球吸收小球(点/秒)", "即时 / 低速机制"),
-            new("FriendlyShellTransferRate", "shellRate", "大球之间助力(点/秒)", "即时 / 低速机制"),
-            new("FriendlyAssistReachFactor", "reach", "助力范围系数", "即时 / territory"),
-            new("FriendlyAssistMaxValue", "max", "单球积分上限", "即时 / territory"),
-        ]),
-        new("护罩与触杀", "balance.shield",
-        [
-            new("ShieldBreakthrough", "breakthrough", "破盾直入", "即时 / territory", true),
-            new("ContactKillEnabled", "contact", "炮台触杀", "即时 / territory", true),
-            new("SelfShieldRefundEnabled", "refund", "自家小球回充", "即时 / territory", true),
-            new("SuddenDeathShieldBlock", "suddenBlock", "决胜期封锁护盾", "即时 / territory", true),
-            new("ShieldSlotGainPerValue", "slotGain", "护盾槽每点增益", "即时 / 两者; 建议对拍 50000"),
-            new("ShieldRegenPerSecond", "regen", "自然再生/秒", "即时 / 两者; 默认 0"),
-        ]),
-        new("余烬爆发", "balance.ember",
-        [
-            new("EmberSpeedMin", "speedMin", "余烬最低速度", "即时 / territory"),
-            new("EmberSpeedMax", "speedMax", "余烬最高速度", "即时 / territory"),
-            new("EmberFromAmmo", "ammo", "弹药转余烬", "即时 / territory", true),
-            new("EmberDrainEconomy", "economy", "吸收经济球", "即时 / territory", true),
-        ]),
-        new("经济到火力", "balance.economy",
-        [
-            new("IntensityExponent", "exponent", "强度指数", "即时 / direct 为主"),
-            new("SizeGainBase", "sizeBase", "尺寸基数", "即时 / direct 为主"),
-            new("BurstDamageGain", "burstDamage", "爆发伤害增益", "即时 / direct 为主"),
-            new("BurstSpreadGain", "burstSpread", "爆发散布增益", "即时 / direct 为主"),
-            new("PierceDamageGain", "pierce", "穿透伤害增益", "即时 / direct 为主"),
-            new("GravitySizeGain", "gravitySize", "重力尺寸增益", "即时 / direct 为主"),
-            new("GravityDamageGain", "gravityDamage", "重力伤害增益", "即时 / direct 为主"),
-            new("ScoreDamageGain", "score", "积分伤害增益", "即时 / direct 为主"),
-        ]),
-        new("战场物理", "balance.physics",
-        [
-            new("WallRestitution", "wall", "墙面弹性", "即时 / 仅右世界"),
-            new("BallRestitution", "ball", "弹体碰撞弹性", "即时 / 仅右世界"),
-        ]),
-        new("收敛与胜负", "balance.round",
-        [
-            new("CountdownSeconds", "countdown", "开局倒计时(s)", "下局"),
-            new("SettleSeconds", "settle", "结算展示(s)", "即时"),
-            new("HardTimeLimitSeconds", "limit", "硬性时限(s)", "即时; 0=关闭"),
-        ]),
-    ];
 
     public BalanceSettingsView(BalanceConfigStore balance, BattleConfigStore arena, PresetStore presets)
     {
@@ -163,7 +83,8 @@ internal sealed class BalanceSettingsView : UserControl, ICommandBusAware
         Refresh();
     }
 
-    private FrameworkElement BuildGroup(Group group)
+    private FrameworkElement BuildGroup(
+        (string Group, string Command, IReadOnlyList<BalanceFieldDescriptor> Fields) group)
     {
         var panel = new StackPanel { Margin = new Thickness(0, 0, 0, 10) };
         var header = new DockPanel { Margin = new Thickness(0, 6, 0, 4) };
@@ -173,7 +94,7 @@ internal sealed class BalanceSettingsView : UserControl, ICommandBusAware
         header.Children.Add(apply);
         header.Children.Add(new TextBlock
         {
-            Text = group.Title,
+            Text = group.Group,
             FontSize = 14,
             FontWeight = FontWeights.SemiBold,
             VerticalAlignment = VerticalAlignment.Center,
@@ -271,7 +192,8 @@ internal sealed class BalanceSettingsView : UserControl, ICommandBusAware
         return button;
     }
 
-    private async Task ExecuteGroup(Group group)
+    private async Task ExecuteGroup(
+        (string Group, string Command, IReadOnlyList<BalanceFieldDescriptor> Fields) group)
     {
         await Execute(BuildCommand(group));
         Refresh();
@@ -286,7 +208,8 @@ internal sealed class BalanceSettingsView : UserControl, ICommandBusAware
         Refresh();
     }
 
-    private string BuildCommand(Group group)
+    private string BuildCommand(
+        (string Group, string Command, IReadOnlyList<BalanceFieldDescriptor> Fields) group)
     {
         var builder = new StringBuilder(group.Command);
         foreach (var field in group.Fields)
