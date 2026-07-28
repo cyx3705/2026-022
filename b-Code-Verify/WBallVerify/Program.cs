@@ -13,11 +13,14 @@ using WBall.Model;
 using WBall.Presentation;
 using WBall.Recording;
 using WBall.Stage;
+using WBall.Verify;
 
-var dataRoot = Path.Combine(Path.GetTempPath(), $"wball_verify_v32_{Environment.ProcessId}");
-Directory.CreateDirectory(dataRoot);
-var log = new NullLog();
 var failures = new List<string>();
+// v3.4 V34-02:产物根由 using(try/finally)托管 —— 通过即清理,失败保留并打印路径。
+// --keep-artifacts 强制保留;--artifact-root <path> 换根。
+using var artifacts = VerifyArtifacts.Create(args, () => failures.Count == 0);
+var dataRoot = artifacts.Root;
+var log = new NullLog();
 
 void Check(string name, bool passed, string? detail = null)
 {
@@ -63,9 +66,10 @@ if (args.Contains("--render-page-smoke", StringComparer.OrdinalIgnoreCase))
     {
         try
         {
+            var pageRoot = artifacts.Suite("page-smoke");
             var pageHarness = new Harness(dataRoot, log, new BalanceConfig());
-            var pageConfig = new RenderTimeConfigStore(Path.Combine(dataRoot, "page-config"), log);
-            var pageWorkspace = Path.Combine(dataRoot, "page-workspace");
+            var pageConfig = new RenderTimeConfigStore(Path.Combine(pageRoot, "config"), log);
+            var pageWorkspace = Path.Combine(pageRoot, "workspace");
             var pageScenarios = new ScenarioStore(pageWorkspace, log);
             using var pageService = new RenderJobService(
                 pageHarness.EconomyWorld, pageHarness.BattleConfig, pageHarness.BalanceStore,
@@ -82,7 +86,7 @@ if (args.Contains("--render-page-smoke", StringComparer.OrdinalIgnoreCase))
             bitmap.Render(view);
             var encoder = new PngBitmapEncoder();
             encoder.Frames.Add(BitmapFrame.Create(bitmap));
-            pagePath = Path.Combine(dataRoot, "render-page-300x720.png");
+            pagePath = Path.Combine(pageRoot, "render-page-300x720.png");
             using var stream = File.Create(pagePath);
             encoder.Save(stream);
         }
@@ -108,7 +112,8 @@ if (args.Contains("--render-page-smoke", StringComparer.OrdinalIgnoreCase))
 if (args.Contains("--render-smoke", StringComparer.OrdinalIgnoreCase))
 {
     var renderHarness = new Harness(dataRoot, log, new BalanceConfig());
-    var renderTime = new RenderTimeConfigStore(Path.Combine(dataRoot, "render-config"), log);
+    var renderRoot = artifacts.Suite("render-smoke");
+    var renderTime = new RenderTimeConfigStore(Path.Combine(renderRoot, "config"), log);
     renderTime.Current.Width = 640;
     renderTime.Current.Height = 360;
     renderTime.Current.Fps = 2;
@@ -116,7 +121,7 @@ if (args.Contains("--render-smoke", StringComparer.OrdinalIgnoreCase))
     renderTime.Current.KeepPng = true;
     renderTime.Current.RenderAutoSlow = false;
     renderTime.Save();
-    var renderWorkspace = Path.Combine(dataRoot, "render-workspace");
+    var renderWorkspace = Path.Combine(renderRoot, "workspace");
     var renderScenarios = new ScenarioStore(renderWorkspace, log);
     using var renderJobs = new RenderJobService(
         renderHarness.EconomyWorld,
@@ -316,7 +321,8 @@ if (args.Contains("--render-smoke", StringComparer.OrdinalIgnoreCase))
 if (args.Contains("--render-long-acceptance", StringComparer.OrdinalIgnoreCase))
 {
     var longHarness = new Harness(dataRoot, log, new BalanceConfig());
-    var longConfig = new RenderTimeConfigStore(Path.Combine(dataRoot, "render-long-config"), log);
+    var longSuite = artifacts.Suite("render-long");
+    var longConfig = new RenderTimeConfigStore(Path.Combine(longSuite, "config"), log);
     longConfig.Current.Width = 1920;
     longConfig.Current.Height = 1080;
     longConfig.Current.Fps = 30;
@@ -328,7 +334,7 @@ if (args.Contains("--render-long-acceptance", StringComparer.OrdinalIgnoreCase))
     longConfig.Current.SlowStartBalls = 100;
     longConfig.Current.SlowFullBalls = 500;
     longConfig.Save();
-    var longWorkspace = Path.Combine(dataRoot, "render-long-workspace");
+    var longWorkspace = Path.Combine(longSuite, "workspace");
     var longScenarios = new ScenarioStore(longWorkspace, log);
     var jointScenario = longScenarios.Load("demo4");
     jointScenario.Name = "joint-v33-render";
@@ -419,7 +425,7 @@ if (args.Contains("--render-long-acceptance", StringComparer.OrdinalIgnoreCase))
         longRoot.GetProperty("peakBgraFrames").GetInt32() <= 1
         && longRoot.GetProperty("peakQueueDepth").GetInt32() <= longConfig.Current.QueueCapacity
         && longPeak - shortPeak < 256L * 1024 * 1024,
-        $"shortPeak={shortPeak / 1024.0 / 1024:0.##}MiB longPeak={longPeak / 1024.0 / 1024:0.##}MiB delta={(longPeak-shortPeak) / 1024.0 / 1024:0.##}MiB");
+        $"shortPeak={shortPeak / 1024.0 / 1024:0.##}MiB longPeak={longPeak / 1024.0 / 1024:0.##}MiB delta={(longPeak - shortPeak) / 1024.0 / 1024:0.##}MiB");
     var ledger = longRoot.GetProperty("valueLedger");
     Check("render long pressure reclaims promoted small shots without dropping frames",
         longRoot.GetProperty("peakPromotedSmallShots").GetInt32() > 0
@@ -458,7 +464,7 @@ if (args.Contains("--assist-performance", StringComparer.OrdinalIgnoreCase))
 if (args.Contains("--calibrate", StringComparer.OrdinalIgnoreCase))
 {
     var calibrationHarness = new Harness(dataRoot, log, new BalanceConfig());
-    var calibrationPresets = new PresetStore(Path.Combine(dataRoot, "calibration"), log);
+    var calibrationPresets = new PresetStore(artifacts.Suite("calibration"), log);
     var calibrationSimulator = new BalanceSimulator(
         calibrationHarness.EconomyWorld, calibrationHarness.BattleConfig, calibrationHarness.Weapons, log);
     var requestedProfiles = args.SkipWhile(x => !x.Equals("--calibrate", StringComparison.OrdinalIgnoreCase))
