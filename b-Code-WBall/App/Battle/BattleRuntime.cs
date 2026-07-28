@@ -1086,67 +1086,67 @@ public sealed class BattleRuntime
             var col = (int)(ball.X / step);
             var row = (int)(ball.Y / step);
             for (var dx = -1; dx <= 1; dx++)
-            for (var dy = -1; dy <= 1; dy++)
-            {
-                if (!buckets.TryGetValue((col + dx, row + dy), out var nearby))
-                    continue;
-                foreach (var other in nearby)
+                for (var dy = -1; dy <= 1; dy++)
                 {
-                    if (ReferenceEquals(ball, other) || string.CompareOrdinal(ball.Id, other.Id) >= 0)
+                    if (!buckets.TryGetValue((col + dx, row + dy), out var nearby))
                         continue;
-                    var theirs = other.Projectile;
-                    if (theirs == null || theirs.CapturesLeft <= 0)
-                        continue;
-                    var distance = DistanceSquared(ball.X, ball.Y, other.X, other.Y);
-                    var sameOwner = mine.OwnerFactionId.Equals(
-                        theirs.OwnerFactionId, StringComparison.OrdinalIgnoreCase);
-                    if (!sameOwner)
+                    foreach (var other in nearby)
                     {
-                        var enemyReach = (ball.Size + other.Size) * config.HaloReachFactor;
-                        if (distance <= enemyReach * enemyReach)
-                            enemyPairs.Add(new DuelPair(ball, other));
-                        continue;
-                    }
-                    var reach = (ball.Size + other.Size) * config.FriendlyAssistReachFactor;
-                    if (distance > reach * reach)
-                        continue;
+                        if (ReferenceEquals(ball, other) || string.CompareOrdinal(ball.Id, other.Id) >= 0)
+                            continue;
+                        var theirs = other.Projectile;
+                        if (theirs == null || theirs.CapturesLeft <= 0)
+                            continue;
+                        var distance = DistanceSquared(ball.X, ball.Y, other.X, other.Y);
+                        var sameOwner = mine.OwnerFactionId.Equals(
+                            theirs.OwnerFactionId, StringComparison.OrdinalIgnoreCase);
+                        if (!sameOwner)
+                        {
+                            var enemyReach = (ball.Size + other.Size) * config.HaloReachFactor;
+                            if (distance <= enemyReach * enemyReach)
+                                enemyPairs.Add(new DuelPair(ball, other));
+                            continue;
+                        }
+                        var reach = (ball.Size + other.Size) * config.FriendlyAssistReachFactor;
+                        if (distance > reach * reach)
+                            continue;
 
-                    var roleA = RoleOf(mine);
-                    var roleB = RoleOf(theirs);
-                    Ball donor;
-                    Ball receiver;
-                    var small = false;
-                    if (roleA == ProjectileRole.SmallShot && roleB == ProjectileRole.Shell)
-                    {
-                        donor = ball;
-                        receiver = other;
-                        small = true;
-                    }
-                    else if (roleB == ProjectileRole.SmallShot && roleA == ProjectileRole.Shell)
-                    {
-                        donor = other;
-                        receiver = ball;
-                        small = true;
-                    }
-                    else if (roleA == ProjectileRole.Shell && roleB == ProjectileRole.Shell)
-                    {
-                        var compare = CompareAssistRank(ball, other);
-                        receiver = compare >= 0 ? ball : other;
-                        donor = ReferenceEquals(receiver, ball) ? other : ball;
-                    }
-                    else
-                    {
-                        continue;
-                    }
+                        var roleA = RoleOf(mine);
+                        var roleB = RoleOf(theirs);
+                        Ball donor;
+                        Ball receiver;
+                        var small = false;
+                        if (roleA == ProjectileRole.SmallShot && roleB == ProjectileRole.Shell)
+                        {
+                            donor = ball;
+                            receiver = other;
+                            small = true;
+                        }
+                        else if (roleB == ProjectileRole.SmallShot && roleA == ProjectileRole.Shell)
+                        {
+                            donor = other;
+                            receiver = ball;
+                            small = true;
+                        }
+                        else if (roleA == ProjectileRole.Shell && roleB == ProjectileRole.Shell)
+                        {
+                            var compare = CompareAssistRank(ball, other);
+                            receiver = compare >= 0 ? ball : other;
+                            donor = ReferenceEquals(receiver, ball) ? other : ball;
+                        }
+                        else
+                        {
+                            continue;
+                        }
 
-                    var candidate = new AssistAssignment(donor, receiver, small, distance);
-                    if (!assignments.TryGetValue(donor, out var existing)
-                        || IsBetterReceiver(candidate, existing))
-                    {
-                        assignments[donor] = candidate;
+                        var candidate = new AssistAssignment(donor, receiver, small, distance);
+                        if (!assignments.TryGetValue(donor, out var existing)
+                            || IsBetterReceiver(candidate, existing))
+                        {
+                            assignments[donor] = candidate;
+                        }
                     }
                 }
-            }
         }
 
         if (assignments.Count == 0)

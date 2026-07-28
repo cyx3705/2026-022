@@ -822,14 +822,14 @@ public sealed class DropZoneView : FrameworkElement, ICommandBusAware
                 obj.Y = world.Y - _dragOffset.Y;
                 break;
             case DragKind.Rotate:
-            {
-                var ang = Math.Atan2(world.Y - obj.CenterY, world.X - obj.CenterX);
-                var deltaDeg = (ang - _startAngle) * 180.0 / Math.PI;
-                // 无吸附(V4Q4)
-                obj.Rotation = _startRot + deltaDeg;
-                obj.SyncArrowDirFromRotation();
-                break;
-            }
+                {
+                    var ang = Math.Atan2(world.Y - obj.CenterY, world.X - obj.CenterX);
+                    var deltaDeg = (ang - _startAngle) * 180.0 / Math.PI;
+                    // 无吸附(V4Q4)
+                    obj.Rotation = _startRot + deltaDeg;
+                    obj.SyncArrowDirFromRotation();
+                    break;
+                }
             case DragKind.Resize:
                 ApplyResize(obj, world);
                 break;

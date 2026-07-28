@@ -1,0 +1,84 @@
+# v3.4 V34-08:质量门禁。clean checkout 必须能恢复、构建、格式合规、回归全绿。
+#
+# 前提(自建 Runner):AppShell 本地 feed 需可达 —— 默认按 nuget.config 的相对路径
+# ..\2026-020-OneHistoryStudio\z-Package-AppShell\feed 解析,因此 Runner 上 020 与 022
+# 必须同级 checkout;若布局不同,设仓库变量 APPSHELL_FEED 并把 nuget.config 的
+# appshell-local 值改成 %APPSHELL_FEED%(见该文件注释)。
+name: wball-ci
+
+on:
+  push:
+    branches: ["2026-022-WBall"]
+    paths:
+      - "b-Code-WBall/**"
+      - "b-Code-Verify/**"
+      - "Directory.Build.props"
+      - ".editorconfig"
+      - "nuget.config"
+      - ".github/workflows/ci.yml"
+  pull_request:
+    paths:
+      - "b-Code-WBall/**"
+      - "b-Code-Verify/**"
+  workflow_dispatch:
+
+env:
+  # 本机血泪(见《二次开发演进手册》):CET 环境下必须关掉 W^X,否则 JIT 崩
+  DOTNET_EnableWriteXorExecute: "0"
+  SOLUTION: b-Code-WBall/WBall.sln
+  VERIFY_EXE: b-Code-Verify/WBallVerify/bin/Release/net8.0-windows/WBallVerify.exe
+
+jobs:
+  gate:
+    # WPF + Media Foundation:必须 Windows
+    runs-on: [self-hosted, windows]
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: restore
+        run: dotnet restore ${{ env.SOLUTION }}
+
+      - name: 生成物卫生(索引里不许有 bin/obj/.vs)
+        shell: pwsh
+        run: |
+          $tracked = git ls-files | Select-String -Pattern '(^|/)(bin|obj|\.vs)/'
+          if ($tracked) {
+            $tracked | Select-Object -First 20 | ForEach-Object { Write-Host $_ }
+            throw "索引中仍有 $($tracked.Count) 个生成文件"
+          }
+          Write-Host "tracked build outputs: 0"
+
+      - name: 格式门禁
+        run: dotnet format ${{ env.SOLUTION }} --verify-no-changes --no-restore
+
+      - name: Debug 构建(警告即错误)
+        run: dotnet build ${{ env.SOLUTION }} -c Debug --no-restore
+
+      - name: Release 构建(警告即错误)
+        run: dotnet build ${{ env.SOLUTION }} -c Release --no-restore
+
+      - name: 核心无头回归(含 v3.1/v3.2 回退哈希与 v3.3 哈希)
+        run: ${{ env.VERIFY_EXE }}
+
+      - name: 渲染 smoke
+        run: ${{ env.VERIFY_EXE }} --render-smoke
+
+      - name: 出片页 smoke
+        run: ${{ env.VERIFY_EXE }} --render-page-smoke
+
+      - name: 失败时保留证据
+        if: failure()
+        shell: pwsh
+        run: |
+          # 验证器失败会自留产物目录并打印路径;这里把它们收成 artifact 便于下载
+          $dirs = Get-ChildItem $env:TEMP -Directory -Filter 'wball_verify_v34_*' -ErrorAction SilentlyContinue
+          if ($dirs) { $dirs | ForEach-Object { Write-Host "kept: $($_.FullName)" } }
+
+      - name: 上传失败证据
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: wball-verify-artifacts
+          path: ${{ runner.temp }}/wball_verify_v34_*
+          if-no-files-found: ignore

@@ -110,14 +110,14 @@ public static class PlinkoDemoSeeder
         double hh,
         string? name = null,
         double rotation = 0) => new()
-    {
-        Id = $"obj{n}",
-        Type = type,
-        X = x,
-        Y = y,
-        W = ww,
-        H = hh,
-        Name = name,
-        Rotation = rotation,
-    };
+        {
+            Id = $"obj{n}",
+            Type = type,
+            X = x,
+            Y = y,
+            W = ww,
+            H = hh,
+            Name = name,
+            Rotation = rotation,
+        };
 }

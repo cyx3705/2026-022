@@ -412,13 +412,19 @@ public static class WBallCommands
                 {
                     world.Factions.Add(new Faction
                     {
-                        Id = "blue", Name = "蓝队", Color = "#3B82F6",
-                        InitialBalls = 3, InitialMultiplier = 1,
+                        Id = "blue",
+                        Name = "蓝队",
+                        Color = "#3B82F6",
+                        InitialBalls = 3,
+                        InitialMultiplier = 1,
                     });
                     world.Factions.Add(new Faction
                     {
-                        Id = "red", Name = "红队", Color = "#EF4444",
-                        InitialBalls = 3, InitialMultiplier = 1,
+                        Id = "red",
+                        Name = "红队",
+                        Color = "#EF4444",
+                        InitialBalls = 3,
+                        InitialMultiplier = 1,
                     });
                     world.NotifyChanged(markDirty: false);
                 }

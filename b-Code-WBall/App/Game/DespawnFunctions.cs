@@ -60,33 +60,33 @@ public static class DespawnFunctions
                 return false;
 
             case Kind.Multiply:
-            {
-                var next = ball.Multiplier * (long)fn.Factor;
-                ball.Multiplier = PublicDefaults.ClampMultiplier(next);
-                defaults.ApplyToBall(ball);
-                return true;
-            }
+                {
+                    var next = ball.Multiplier * (long)fn.Factor;
+                    ball.Multiplier = PublicDefaults.ClampMultiplier(next);
+                    defaults.ApplyToBall(ball);
+                    return true;
+                }
 
             case Kind.Run:
-            {
-                var scored = ball.Multiplier;
-                var settled = world.Settlements?.TrySettle("RUN", world, ball, scored, warn) == true;
-                if (!settled)
-                    FactionBoard.AddScore(world, ball.Color, scored, warn);
-                ball.Multiplier = PublicDefaults.ClampMultiplier(defaults.InitialMultiplier);
-                defaults.ApplyToBall(ball);
-                // 颜色保持(V6Q13)
-                return true;
-            }
+                {
+                    var scored = ball.Multiplier;
+                    var settled = world.Settlements?.TrySettle("RUN", world, ball, scored, warn) == true;
+                    if (!settled)
+                        FactionBoard.AddScore(world, ball.Color, scored, warn);
+                    ball.Multiplier = PublicDefaults.ClampMultiplier(defaults.InitialMultiplier);
+                    defaults.ApplyToBall(ball);
+                    // 颜色保持(V6Q13)
+                    return true;
+                }
 
             case Kind.Settlement:
-            {
-                var value = ball.Multiplier;
-                world.Settlements?.TrySettle(fn.Name!, world, ball, value, warn);
-                ball.Multiplier = PublicDefaults.ClampMultiplier(defaults.InitialMultiplier);
-                defaults.ApplyToBall(ball);
-                return true;
-            }
+                {
+                    var value = ball.Multiplier;
+                    world.Settlements?.TrySettle(fn.Name!, world, ball, value, warn);
+                    ball.Multiplier = PublicDefaults.ClampMultiplier(defaults.InitialMultiplier);
+                    defaults.ApplyToBall(ball);
+                    return true;
+                }
 
             default:
                 return false;

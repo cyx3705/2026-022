@@ -301,14 +301,18 @@ public static class BalanceCommands
     {
         registry.Register(new CommandDescriptor
         {
-            Name = "balance.config", Summary = "打印全部战斗平衡字段及生效范围", Example = "balance.config",
+            Name = "balance.config",
+            Summary = "打印全部战斗平衡字段及生效范围",
+            Example = "balance.config",
             Readonly = true,
             Handler = CommandDescriptor.Sync(_ => CommandResult.Ok(FormatConfig(store.Current, battle.TerritoryMode))),
         });
 
         registry.Register(new CommandDescriptor
         {
-            Name = "balance.default", Summary = "恢复战斗平衡出厂默认", Example = "balance.default reset=true",
+            Name = "balance.default",
+            Summary = "恢复战斗平衡出厂默认",
+            Example = "balance.default reset=true",
             Parameters = Specs(("reset", ParamType.Bool)),
             Handler = CommandDescriptor.Sync(ctx =>
             {
@@ -321,7 +325,9 @@ public static class BalanceCommands
 
         registry.Register(new CommandDescriptor
         {
-            Name = "balance.diff", Summary = "比较两套平衡配置", Example = "balance.diff a=default b=current",
+            Name = "balance.diff",
+            Summary = "比较两套平衡配置",
+            Example = "balance.diff a=default b=current",
             Readonly = true,
             Parameters = [
                 new ParameterSpec { Name = "a", Description = "default|current|预设名", Default = "default" },
@@ -341,7 +347,9 @@ public static class BalanceCommands
 
         registry.Register(new CommandDescriptor
         {
-            Name = "balance.sim", Summary = "在独立实例中按多种子无头试跑", Example = "balance.sim seeds=42..49 seconds=180 config=current format=table",
+            Name = "balance.sim",
+            Summary = "在独立实例中按多种子无头试跑",
+            Example = "balance.sim seeds=42..49 seconds=180 config=current format=table",
             Readonly = true,
             Parameters = [
                 new ParameterSpec { Name = "seeds", Description = "逗号列表或范围", Default = "42,43,44" },
@@ -370,12 +378,17 @@ public static class BalanceCommands
 
         registry.Register(new CommandDescriptor
         {
-            Name = "preset.list", Summary = "列出数值预设", Example = "preset.list", Readonly = true,
+            Name = "preset.list",
+            Summary = "列出数值预设",
+            Example = "preset.list",
+            Readonly = true,
             Handler = CommandDescriptor.Sync(_ => CommandResult.Ok(string.Join(Environment.NewLine, presets.List()))),
         });
         registry.Register(new CommandDescriptor
         {
-            Name = "preset.save", Summary = "把当前 arena+balance 保存为数值预设", Example = "preset.save name=rush",
+            Name = "preset.save",
+            Summary = "把当前 arena+balance 保存为数值预设",
+            Example = "preset.save name=rush",
             Parameters = [new ParameterSpec { Name = "name", Description = "预设名", Required = true }],
             Handler = CommandDescriptor.Sync(ctx =>
             {
@@ -385,7 +398,9 @@ public static class BalanceCommands
         });
         registry.Register(new CommandDescriptor
         {
-            Name = "preset.load", Summary = "读取数值预设(只覆盖 arena+balance)", Example = "preset.load name=rush reset=true",
+            Name = "preset.load",
+            Summary = "读取数值预设(只覆盖 arena+balance)",
+            Example = "preset.load name=rush reset=true",
             Parameters = [
                 new ParameterSpec { Name = "name", Description = "预设名", Required = true },
                 new ParameterSpec { Name = "reset", Description = "立即重置战场", Type = ParamType.Bool, Default = "false" },
@@ -406,7 +421,9 @@ public static class BalanceCommands
         });
         registry.Register(new CommandDescriptor
         {
-            Name = "preset.delete", Summary = "删除数值预设(须 confirm=true)", Example = "preset.delete name=test confirm=true",
+            Name = "preset.delete",
+            Summary = "删除数值预设(须 confirm=true)",
+            Example = "preset.delete name=test confirm=true",
             Parameters = [
                 new ParameterSpec { Name = "name", Description = "预设名", Required = true },
                 new ParameterSpec { Name = "confirm", Description = "显式确认", Type = ParamType.Bool, Default = "false" },

@@ -147,17 +147,17 @@ internal sealed class StageFrameRenderer
             var cellW = world.Width / frame.TerritoryCols;
             var cellH = world.Height / frame.TerritoryRows;
             for (var row = 0; row < frame.TerritoryRows; row++)
-            for (var col = 0; col < frame.TerritoryCols; col++)
-            {
-                var owner = _territory[row * frame.TerritoryCols + col];
-                if (owner < 0 || owner >= frame.TerritoryFactionIds.Length)
-                    continue;
-                var id = frame.TerritoryFactionIds[owner];
-                if (!colors.TryGetValue(id, out var color))
-                    continue;
-                dc.DrawRectangle(Brush(color, 0x32), null,
-                    new Rect(world.X + col * cellW, world.Y + row * cellH, cellW + 0.35, cellH + 0.35));
-            }
+                for (var col = 0; col < frame.TerritoryCols; col++)
+                {
+                    var owner = _territory[row * frame.TerritoryCols + col];
+                    if (owner < 0 || owner >= frame.TerritoryFactionIds.Length)
+                        continue;
+                    var id = frame.TerritoryFactionIds[owner];
+                    if (!colors.TryGetValue(id, out var color))
+                        continue;
+                    dc.DrawRectangle(Brush(color, 0x32), null,
+                        new Rect(world.X + col * cellW, world.Y + row * cellH, cellW + 0.35, cellH + 0.35));
+                }
         }
 
         foreach (var projectile in frame.Projectiles)
