@@ -67,8 +67,30 @@ public sealed class BattleDirector
     public int Seed { get; private set; } = 42;
     public double ElapsedSeconds { get; private set; }
     public long Frame { get; private set; }
+    /// <summary>
+    /// v3.4 V34-03:诊断事件缓冲**有上限**。此前是无界 List —— 长时出片(数十分钟)里
+    /// 开火/受击每帧都在追加,进程工作集只涨不落。现在只保留最近 <see cref="EventCapacity"/> 条,
+    /// 需要完整历史时用 <see cref="EventSink"/> 流式写盘,不在内存里囤对象。
+    /// </summary>
+    public const int EventCapacity = 500;
+
     public IReadOnlyList<BattleEvent> Events => _events;
-    private readonly List<BattleEvent> _events = [];
+    private readonly List<BattleEvent> _events = new(EventCapacity);
+
+    /// <summary>可选的流式事件出口(接完整历史用;为 null 时事件只进有界缓冲)。</summary>
+    public Action<BattleEvent>? EventSink { get; set; }
+
+    /// <summary>本局累计事件条数(缓冲会丢弃旧条目,这个计数不会)。</summary>
+    public long EventsRaised { get; private set; }
+
+    private void Append(BattleEvent battleEvent)
+    {
+        EventsRaised++;
+        EventSink?.Invoke(battleEvent);
+        _events.Add(battleEvent);
+        if (_events.Count > EventCapacity)
+            _events.RemoveRange(0, _events.Count - EventCapacity);
+    }
 
     public void Start(int seed, double? countdownSeconds = null)
     {
@@ -77,6 +99,7 @@ public sealed class BattleDirector
         Frame = 0;
         IsPaused = false;
         _events.Clear();
+        EventsRaised = 0;
         _battle.Reset(seed);
 
         var sharedRandom = new Random(seed);
@@ -117,6 +140,7 @@ public sealed class BattleDirector
         IsPaused = false;
         State = DirectorState.Idle;
         _events.Clear();
+        EventsRaised = 0;
         _stage.SetMode(StageMode.Edit);
         StateChanged?.Invoke();
     }
@@ -265,14 +289,14 @@ public sealed class BattleDirector
     private void OnBattleEvent(BattleEvent battleEvent)
     {
         var normalized = battleEvent with { Time = ElapsedSeconds };
-        _events.Add(normalized);
+        Append(normalized);
         EventRaised?.Invoke(normalized);
     }
 
     private void Raise(string kind, string message, string? factionId = null)
     {
         var battleEvent = new BattleEvent(ElapsedSeconds, kind, message, factionId);
-        _events.Add(battleEvent);
+        Append(battleEvent);
         EventRaised?.Invoke(battleEvent);
         _log.Info("director", $"[{ElapsedSeconds:0.000}] {message}");
     }
