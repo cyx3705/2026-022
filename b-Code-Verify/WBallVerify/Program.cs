@@ -14,6 +14,7 @@ using WBall.Presentation;
 using WBall.Recording;
 using WBall.Stage;
 using WBall.Verify;
+using WBall.Verify.Suites;
 
 // v3.4 V34-02:产物根由 using(try/finally)托管 —— 通过即清理,失败保留并打印路径。
 // --keep-artifacts 强制保留;--artifact-root <path> 换根。
@@ -380,17 +381,7 @@ static string RenderFingerprint(string manifestPath)
 }
 
 if (args.Contains("--assist-performance", StringComparer.OrdinalIgnoreCase))
-{
-    _ = MeasureAssistSteps(dataRoot, log, enabled: false, ballCount: 1_000, measuredSteps: 1);
-    var disabledMs = MeasureAssistSteps(dataRoot, log, enabled: false, ballCount: 10_000, measuredSteps: 3);
-    var enabledMs = MeasureAssistSteps(dataRoot, log, enabled: true, ballCount: 10_000, measuredSteps: 3);
-    var ratio = enabledMs / Math.Max(0.001, disabledMs);
-    Check("v3.3 10k assist overhead remains bounded",
-        ratio <= 3.0,
-        $"disabled={disabledMs:0.###}ms enabled={enabledMs:0.###}ms ratio={ratio:0.###}x");
-    Console.WriteLine(failures.Count == 0 ? "ASSIST PERFORMANCE PASS" : "ASSIST PERFORMANCE FAIL");
-    return failures.Count == 0 ? 0 : 1;
-}
+    return WBall.Verify.Suites.AssistSuite.RunPerformance(run);
 
 if (args.Contains("--calibrate", StringComparer.OrdinalIgnoreCase))
 {
@@ -468,90 +459,90 @@ Check("pack 160k", pack.Battle.SmallPackValue(160_000) == 8);
 Check("pack cap", pack.Battle.SmallPackValue(long.MaxValue) == 64);
 
 // v3.3：身份与积分正交；升格小球可低速回收，且每个接收大球共享速率预算。
-var reclaim = AssistHarness(dataRoot, log, new BalanceConfig());
-var reclaimShell = AddAssistBall(reclaim, "receiver", ProjectileRole.Shell, 10);
-var packedSmall = AddAssistBall(reclaim, "packed-small", ProjectileRole.SmallShot, 2);
-AdvanceBattle(reclaim, 9);
+var reclaim = AssistSuite.NewHarness(run, new BalanceConfig());
+var reclaimShell = AssistSuite.AddBall(reclaim, "receiver", ProjectileRole.Shell, 10);
+var packedSmall = AssistSuite.AddBall(reclaim, "packed-small", ProjectileRole.SmallShot, 2);
+AssistSuite.Advance(reclaim, 9);
 Check("v3.3 packed value-2 small shot is reclaimed",
     !reclaim.BattleWorld.Balls.Contains(packedSmall) && reclaimShell.Projectile!.CapturesLeft == 12,
     $"smallAlive={reclaim.BattleWorld.Balls.Contains(packedSmall)} receiver={reclaimShell.Projectile!.CapturesLeft}");
 
-var manySmall = AssistHarness(dataRoot, log, new BalanceConfig());
-var sharedReceiver = AddAssistBall(manySmall, "receiver", ProjectileRole.Shell, 100);
+var manySmall = AssistSuite.NewHarness(run, new BalanceConfig());
+var sharedReceiver = AssistSuite.AddBall(manySmall, "receiver", ProjectileRole.Shell, 100);
 for (var i = 0; i < 100; i++)
-    AddAssistBall(manySmall, $"small-{i:D3}", ProjectileRole.SmallShot, 1);
-var totalBefore = ProjectileValue(manySmall);
-AdvanceBattle(manySmall, 60);
+    AssistSuite.AddBall(manySmall, $"small-{i:D3}", ProjectileRole.SmallShot, 1);
+var totalBefore = AssistSuite.ProjectileValue(manySmall);
+AssistSuite.Advance(manySmall, 60);
 var absorbed = sharedReceiver.Projectile!.CapturesLeft - 100;
 Check("v3.3 small assist budget is shared", absorbed is >= 14 and <= 15,
     $"absorbed={absorbed}");
-Check("v3.3 small assist conserves value", ProjectileValue(manySmall) == totalBefore,
-    $"before={totalBefore} after={ProjectileValue(manySmall)}");
+Check("v3.3 small assist conserves value", AssistSuite.ProjectileValue(manySmall) == totalBefore,
+    $"before={totalBefore} after={AssistSuite.ProjectileValue(manySmall)}");
 
-var shellAssist = AssistHarness(dataRoot, log, new BalanceConfig());
-var largeShell = AddAssistBall(shellAssist, "large", ProjectileRole.Shell, 10);
-var smallShell = AddAssistBall(shellAssist, "small", ProjectileRole.Shell, 6);
-AdvanceBattle(shellAssist, 60);
+var shellAssist = AssistSuite.NewHarness(run, new BalanceConfig());
+var largeShell = AssistSuite.AddBall(shellAssist, "large", ProjectileRole.Shell, 10);
+var smallShell = AssistSuite.AddBall(shellAssist, "small", ProjectileRole.Shell, 6);
+AssistSuite.Advance(shellAssist, 60);
 Check("v3.3 larger shell receives friendly value",
     largeShell.Projectile!.CapturesLeft == 16 && !shellAssist.BattleWorld.Balls.Contains(smallShell),
     $"large={largeShell.Projectile!.CapturesLeft} smallAlive={shellAssist.BattleWorld.Balls.Contains(smallShell)}");
-Check("v3.3 shell assist conserves value", ProjectileValue(shellAssist) == 16);
+Check("v3.3 shell assist conserves value", AssistSuite.ProjectileValue(shellAssist) == 16);
 
 var equalWinners = new HashSet<string>(StringComparer.Ordinal);
-var equal = AssistHarness(dataRoot, log, new BalanceConfig { FriendlyShellTransferRate = 10 }, 0);
+var equal = AssistSuite.NewHarness(run, new BalanceConfig { FriendlyShellTransferRate = 10 }, 0);
 for (var seed = 0; seed < 100; seed++)
 {
     equal.Battle.Reset(seed);
-    AddAssistBall(equal, "equal-a", ProjectileRole.Shell, 10);
-    AddAssistBall(equal, "equal-b", ProjectileRole.Shell, 10);
-    AdvanceBattle(equal, 2);
+    AssistSuite.AddBall(equal, "equal-a", ProjectileRole.Shell, 10);
+    AssistSuite.AddBall(equal, "equal-b", ProjectileRole.Shell, 10);
+    AssistSuite.Advance(equal, 2);
     equalWinners.Add(equal.BattleWorld.Balls.Single().Id);
 }
 Check("v3.3 equal-shell choice spans both sides", equalWinners.SetEquals(["equal-a", "equal-b"]),
     string.Join(",", equalWinners.Order()));
 
 equal.Battle.Reset(42);
-AddAssistBall(equal, "equal-a", ProjectileRole.Shell, 10);
-AddAssistBall(equal, "equal-b", ProjectileRole.Shell, 10);
-AdvanceBattle(equal, 2);
+AssistSuite.AddBall(equal, "equal-a", ProjectileRole.Shell, 10);
+AssistSuite.AddBall(equal, "equal-b", ProjectileRole.Shell, 10);
+AssistSuite.Advance(equal, 2);
 var equalRepeatA = equal.BattleWorld.Balls.Single().Id;
 equal.Battle.Reset(42);
-AddAssistBall(equal, "equal-a", ProjectileRole.Shell, 10);
-AddAssistBall(equal, "equal-b", ProjectileRole.Shell, 10);
-AdvanceBattle(equal, 2);
+AssistSuite.AddBall(equal, "equal-a", ProjectileRole.Shell, 10);
+AssistSuite.AddBall(equal, "equal-b", ProjectileRole.Shell, 10);
+AssistSuite.Advance(equal, 2);
 var equalRepeatB = equal.BattleWorld.Balls.Single().Id;
 Check("v3.3 equal-shell choice is seed deterministic",
     equalRepeatA == equalRepeatB);
 
-var capped = AssistHarness(dataRoot, log, new BalanceConfig
+var capped = AssistSuite.NewHarness(run, new BalanceConfig
 {
     FriendlyShellTransferRate = 10,
     FriendlyAssistMaxValue = 12,
 });
-var cappedReceiver = AddAssistBall(capped, "cap-large", ProjectileRole.Shell, 10);
-var cappedDonor = AddAssistBall(capped, "cap-small", ProjectileRole.Shell, 6);
-AdvanceBattle(capped, 1);
+var cappedReceiver = AssistSuite.AddBall(capped, "cap-large", ProjectileRole.Shell, 10);
+var cappedDonor = AssistSuite.AddBall(capped, "cap-small", ProjectileRole.Shell, 6);
+AssistSuite.Advance(capped, 1);
 Check("v3.3 receiver cap keeps donor remainder",
     cappedReceiver.Projectile!.CapturesLeft == 12 && cappedDonor.Projectile!.CapturesLeft == 4
-    && ProjectileValue(capped) == 16,
+    && AssistSuite.ProjectileValue(capped) == 16,
     $"receiver={cappedReceiver.Projectile!.CapturesLeft} donor={cappedDonor.Projectile!.CapturesLeft}");
 
-var disabledAssist = AssistHarness(dataRoot, log, new BalanceConfig { FriendlyAssistEnabled = false });
-var disabledReceiver = AddAssistBall(disabledAssist, "off-large", ProjectileRole.Shell, 10);
-var disabledDonor = AddAssistBall(disabledAssist, "off-small", ProjectileRole.SmallShot, 2);
-AdvanceBattle(disabledAssist, 10);
+var disabledAssist = AssistSuite.NewHarness(run, new BalanceConfig { FriendlyAssistEnabled = false });
+var disabledReceiver = AssistSuite.AddBall(disabledAssist, "off-large", ProjectileRole.Shell, 10);
+var disabledDonor = AssistSuite.AddBall(disabledAssist, "off-small", ProjectileRole.SmallShot, 2);
+AssistSuite.Advance(disabledAssist, 10);
 Check("v3.3 assist master switch disables transfers",
     disabledReceiver.Projectile!.CapturesLeft == 10 && disabledDonor.Projectile!.CapturesLeft == 2);
 
-var zeroRate = AssistHarness(dataRoot, log, new BalanceConfig
+var zeroRate = AssistSuite.NewHarness(run, new BalanceConfig
 {
     FriendlyAbsorbSmallRate = 0,
     FriendlyShellTransferRate = 0,
 });
-var zeroReceiver = AddAssistBall(zeroRate, "zero-receiver", ProjectileRole.Shell, 10);
-var zeroSmall = AddAssistBall(zeroRate, "zero-small", ProjectileRole.SmallShot, 2);
-var zeroShell = AddAssistBall(zeroRate, "zero-shell", ProjectileRole.Shell, 6);
-AdvanceBattle(zeroRate, 60);
+var zeroReceiver = AssistSuite.AddBall(zeroRate, "zero-receiver", ProjectileRole.Shell, 10);
+var zeroSmall = AssistSuite.AddBall(zeroRate, "zero-small", ProjectileRole.SmallShot, 2);
+var zeroShell = AssistSuite.AddBall(zeroRate, "zero-shell", ProjectileRole.Shell, 6);
+AssistSuite.Advance(zeroRate, 60);
 Check("v3.3 zero rates disable both transfer paths",
     zeroReceiver.Projectile!.CapturesLeft == 10
     && zeroSmall.Projectile!.CapturesLeft == 2
@@ -559,10 +550,10 @@ Check("v3.3 zero rates disable both transfer paths",
 
 foreach (var packedValue in new[] { 2, 4, 8, 64 })
 {
-    var packed = AssistHarness(dataRoot, log, new BalanceConfig { FriendlyAbsorbSmallRate = 10 });
-    var receiver = AddAssistBall(packed, "packed-receiver", ProjectileRole.Shell, 10);
-    var donor = AddAssistBall(packed, $"packed-{packedValue}", ProjectileRole.SmallShot, packedValue);
-    AdvanceBattle(packed, packedValue / 10.0 + 0.2);
+    var packed = AssistSuite.NewHarness(run, new BalanceConfig { FriendlyAbsorbSmallRate = 10 });
+    var receiver = AssistSuite.AddBall(packed, "packed-receiver", ProjectileRole.Shell, 10);
+    var donor = AssistSuite.AddBall(packed, $"packed-{packedValue}", ProjectileRole.SmallShot, packedValue);
+    AssistSuite.Advance(packed, packedValue / 10.0 + 0.2);
     Check($"v3.3 promoted small value {packedValue} reclaims by role",
         !packed.BattleWorld.Balls.Contains(donor)
         && receiver.Projectile!.CapturesLeft == 10 + packedValue);
@@ -570,7 +561,7 @@ foreach (var packedValue in new[] { 2, 4, 8, 64 })
 
 foreach (var packedValue in new[] { 2, 4, 8, 64 })
 {
-    var territory = AssistHarness(dataRoot, log, new BalanceConfig());
+    var territory = AssistSuite.NewHarness(run, new BalanceConfig());
     var territoryOwner = territory.Battle.Turrets[0];
     var ownerIndex = territory.Battle.TerritoryFactionIds
         .Select((id, index) => (id, index))
@@ -584,7 +575,7 @@ foreach (var packedValue in new[] { 2, 4, 8, 64 })
                             return Math.Sqrt((x - t.TurretX) * (x - t.TurretX) + (y - t.TurretY) * (y - t.TurretY))
                                    > t.TurretRadius * territory.Battle.ShieldRingScale + 20;
                         }));
-    var shot = AddAssistBall(territory, $"territory-{packedValue}", ProjectileRole.SmallShot, packedValue);
+    var shot = AssistSuite.AddBall(territory, $"territory-{packedValue}", ProjectileRole.SmallShot, packedValue);
     shot.X = (cell % territory.Battle.TerritoryCols + 0.5) * territory.Battle.TerritoryCellSize;
     shot.Y = (cell / territory.Battle.TerritoryCols + 0.5) * territory.Battle.TerritoryCellSize;
     var originalSize = shot.Size;
@@ -600,7 +591,7 @@ foreach (var packedValue in new[] { 2, 4, 8, 64 })
 
 foreach (var packedValue in new[] { 2, 4, 8, 64 })
 {
-    var grind = AssistHarness(dataRoot, log, new BalanceConfig());
+    var grind = AssistSuite.NewHarness(run, new BalanceConfig());
     var grindOwner = grind.Battle.Turrets[0];
     var ownerIndex = grind.Battle.TerritoryFactionIds
         .Select((id, index) => (id, index))
@@ -614,8 +605,8 @@ foreach (var packedValue in new[] { 2, 4, 8, 64 })
                             return Math.Sqrt((x - t.TurretX) * (x - t.TurretX) + (y - t.TurretY) * (y - t.TurretY))
                                    > t.TurretRadius * grind.Battle.ShieldRingScale + 20;
                         }));
-    var shell = AddAssistBall(grind, $"enemy-shell-{packedValue}", ProjectileRole.Shell, packedValue, ownerIndex: 1);
-    var small = AddAssistBall(grind, $"enemy-small-{packedValue}", ProjectileRole.SmallShot, packedValue);
+    var shell = AssistSuite.AddBall(grind, $"enemy-shell-{packedValue}", ProjectileRole.Shell, packedValue, ownerIndex: 1);
+    var small = AssistSuite.AddBall(grind, $"enemy-small-{packedValue}", ProjectileRole.SmallShot, packedValue);
     var x = (cell % grind.Battle.TerritoryCols + 0.5) * grind.Battle.TerritoryCellSize;
     var y = (cell / grind.Battle.TerritoryCols + 0.5) * grind.Battle.TerritoryCellSize;
     shell.X = small.X = x;
@@ -633,11 +624,11 @@ foreach (var packedValue in new[] { 2, 4, 8, 64 })
         $"small={small.Projectile.CapturesLeft} expected={packedValue - expectedDrain} enemyGround={ledgerAfter.EnemyGround - ledgerBefore.EnemyGround}");
 }
 
-var packedShield = AssistHarness(dataRoot, log, new BalanceConfig());
+var packedShield = AssistSuite.NewHarness(run, new BalanceConfig());
 var packedShieldOwner = packedShield.Battle.Turrets[0];
 var packedShieldTarget = packedShield.Battle.Turrets[1];
 packedShieldTarget.Shield = 100;
-var packedShieldShot = AddAssistBall(packedShield, "packed-shield", ProjectileRole.SmallShot, 4);
+var packedShieldShot = AssistSuite.AddBall(packedShield, "packed-shield", ProjectileRole.SmallShot, 4);
 packedShieldShot.X = packedShieldTarget.TurretX;
 packedShieldShot.Y = packedShieldTarget.TurretY;
 var shieldBeforePacked = packedShieldTarget.Shield;
@@ -648,37 +639,37 @@ Check("v3.3 promoted small uses small-shot shield path",
                 - Math.Max(0, shieldBeforePacked - packedShield.BattleConfig.Arena.ShieldCostPerValue * 4)) < 1e-9,
     $"alive={packedShield.BattleWorld.Balls.Contains(packedShieldShot)} shield={packedShieldTarget.Shield:0.###}");
 
-var twentyShells = AssistHarness(dataRoot, log, new BalanceConfig());
-var twentyReceiver = AddAssistBall(twentyShells, "twenty-receiver", ProjectileRole.Shell, 100);
+var twentyShells = AssistSuite.NewHarness(run, new BalanceConfig());
+var twentyReceiver = AssistSuite.AddBall(twentyShells, "twenty-receiver", ProjectileRole.Shell, 100);
 for (var i = 0; i < 20; i++)
-    AddAssistBall(twentyShells, $"twenty-{i:D2}", ProjectileRole.Shell, 1);
-var twentyTotal = ProjectileValue(twentyShells);
-AdvanceBattle(twentyShells, 60);
+    AssistSuite.AddBall(twentyShells, $"twenty-{i:D2}", ProjectileRole.Shell, 1);
+var twentyTotal = AssistSuite.ProjectileValue(twentyShells);
+AssistSuite.Advance(twentyShells, 60);
 Check("v3.3 twenty shell donors share one 60-second receiver budget",
-    twentyReceiver.Projectile!.CapturesLeft == 106 && ProjectileValue(twentyShells) == twentyTotal,
-    $"receiver={twentyReceiver.Projectile!.CapturesLeft} total={ProjectileValue(twentyShells)}");
+    twentyReceiver.Projectile!.CapturesLeft == 106 && AssistSuite.ProjectileValue(twentyShells) == twentyTotal,
+    $"receiver={twentyReceiver.Projectile!.CapturesLeft} total={AssistSuite.ProjectileValue(twentyShells)}");
 
-var visualAssist = AssistHarness(dataRoot, log, new BalanceConfig
+var visualAssist = AssistSuite.NewHarness(run, new BalanceConfig
 {
     FriendlyAbsorbSmallRate = 10,
     FriendlyAssistVisualEnabled = true,
 });
-AddAssistBall(visualAssist, "visual-receiver", ProjectileRole.Shell, 10);
-AddAssistBall(visualAssist, "visual-small", ProjectileRole.SmallShot, 2);
-AdvanceBattle(visualAssist, 0.2);
+AssistSuite.AddBall(visualAssist, "visual-receiver", ProjectileRole.Shell, 10);
+AssistSuite.AddBall(visualAssist, "visual-small", ProjectileRole.SmallShot, 2);
+AssistSuite.Advance(visualAssist, 0.2);
 Check("v3.3 transfer feedback is aggregated and entity-free",
     visualAssist.Battle.AssistVisuals.Count == 1
     && visualAssist.Battle.AssistVisuals[0].Amount == 2
     && visualAssist.BattleWorld.Balls.Count == 1);
 
-var hiddenVisual = AssistHarness(dataRoot, log, new BalanceConfig
+var hiddenVisual = AssistSuite.NewHarness(run, new BalanceConfig
 {
     FriendlyAbsorbSmallRate = 10,
     FriendlyAssistVisualEnabled = false,
 });
-AddAssistBall(hiddenVisual, "hidden-receiver", ProjectileRole.Shell, 10);
-AddAssistBall(hiddenVisual, "hidden-small", ProjectileRole.SmallShot, 2);
-AdvanceBattle(hiddenVisual, 0.2);
+AssistSuite.AddBall(hiddenVisual, "hidden-receiver", ProjectileRole.Shell, 10);
+AssistSuite.AddBall(hiddenVisual, "hidden-small", ProjectileRole.SmallShot, 2);
+AssistSuite.Advance(hiddenVisual, 0.2);
 Check("v3.3 transfer feedback can be disabled", hiddenVisual.Battle.AssistVisuals.Count == 0);
 
 // BP-08：超过旧 512 上限仍入队，增量总值与队列一致。
@@ -859,90 +850,4 @@ static bool BigBallKillsShieldedTurret(string dataRoot, IShellLog log)
     for (var i = 0; i < 600 && target.Alive; i++)
         harness.Battle.Step(1.0 / 60);
     return !target.Alive;
-}
-
-static Harness AssistHarness(string dataRoot, IShellLog log, BalanceConfig balance, int seed = 42)
-{
-    var harness = new Harness(dataRoot, log, balance, new ArenaLayoutConfig { BallCollision = false });
-    harness.Battle.Reset(seed);
-    return harness;
-}
-
-static Ball AddAssistBall(Harness harness, string id, ProjectileRole role, int value, int ownerIndex = 0)
-{
-    var owner = harness.Battle.Turrets[ownerIndex];
-    var shell = role == ProjectileRole.Shell;
-    var ball = new Ball
-    {
-        Id = id,
-        X = harness.BattleWorld.WorldWidth * 0.25,
-        Y = harness.BattleWorld.WorldHeight * 0.25,
-        Color = owner.Color,
-        Size = shell ? harness.Battle.ShellSizeFor(value) : 5,
-        Weight = shell ? harness.Battle.ShellWeightFor(value) : 1,
-        Projectile = new ProjectileState
-        {
-            OwnerFactionId = owner.Id,
-            WeaponName = shell ? "大球" : "小球",
-            Damage = value,
-            CapturesLeft = value,
-            Role = role,
-            IsPromotedSmall = role == ProjectileRole.SmallShot && value > 1,
-        },
-    };
-    harness.BattleWorld.Balls.Add(ball);
-    return ball;
-}
-
-static void AdvanceBattle(Harness harness, double seconds)
-{
-    for (var i = 0; i < (int)Math.Ceiling(seconds * 60); i++)
-        harness.Battle.Step(1.0 / 60);
-}
-
-static int ProjectileValue(Harness harness) => harness.BattleWorld.Balls
-    .Where(x => x.Projectile != null)
-    .Sum(x => x.Projectile!.CapturesLeft);
-
-static double MeasureAssistSteps(
-    string dataRoot,
-    IShellLog log,
-    bool enabled,
-    int ballCount,
-    int measuredSteps)
-{
-    var harness = AssistHarness(dataRoot, log, new BalanceConfig
-    {
-        FriendlyAssistEnabled = enabled,
-        MergeSameOwnerSmall = false,
-        FriendlyAbsorbSmallRate = 0,
-        FriendlyShellTransferRate = 0,
-        FriendlyAssistVisualEnabled = false,
-    });
-    var owner = harness.Battle.Turrets[0];
-    for (var i = 0; i < ballCount; i++)
-    {
-        harness.BattleWorld.Balls.Add(new Ball
-        {
-            Id = $"perf-{i:D5}",
-            X = (i % 100 + 0.5) * harness.BattleWorld.WorldWidth / 100,
-            Y = (i / 100 + 0.5) * harness.BattleWorld.WorldHeight / Math.Ceiling(ballCount / 100.0),
-            Color = owner.Color,
-            Size = 1,
-            Weight = 1,
-            Projectile = new ProjectileState
-            {
-                OwnerFactionId = owner.Id,
-                WeaponName = "小球",
-                CapturesLeft = 1,
-                Role = ProjectileRole.SmallShot,
-            },
-        });
-    }
-    harness.Battle.Step(1.0 / 60);
-    var watch = Stopwatch.StartNew();
-    for (var i = 0; i < measuredSteps; i++)
-        harness.Battle.Step(1.0 / 60);
-    watch.Stop();
-    return watch.Elapsed.TotalMilliseconds / measuredSteps;
 }
