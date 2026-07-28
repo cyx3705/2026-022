@@ -10,6 +10,7 @@ WBall 是一个基于 .NET 8、WPF 与 OneHistory AppShell 的可配置落球对
 
 - 当前应用版本：`3.3.0`
 - 当前代码基线：v3.2.1「离线出片与时间模块」和 v3.3「同阵营积分传递与升格弹回收」已交付
+- v3.4「工程卫生与质量修复」已立项，目标是降低修改放大、恢复可隔离构建和有界验证；不改变 v3.3 战斗结果
 - v3.1 回退兼容：关闭三项 v3.2 默认玩法变更后，留档哈希逐字一致
 - 平台：Windows、`.NET 8`、WPF
 - 框架：`OneHistory.AppShell.Shell 0.5.0`
@@ -172,6 +173,7 @@ WBall 应用层可以自由扩展，但 AppShell 的指令语法、公共契约�
 - [`b-Office/WBall_v3.2_战斗平衡自定义与无头试跑需求.md`](./b-Office/WBall_v3.2_战斗平衡自定义与无头试跑需求.md)
 - [`b-Office/WBall_v3.2.1_结果导向离线出片与时间模块需求.md`](./b-Office/WBall_v3.2.1_结果导向离线出片与时间模块需求.md)
 - [`b-Office/WBall_v3.3_同阵营积分传递与升格弹回收需求.md`](./b-Office/WBall_v3.3_同阵营积分传递与升格弹回收需求.md)
+- [`b-Office/WBall_v3.4_工程卫生与质量修复需求.md`](./b-Office/WBall_v3.4_工程卫生与质量修复需求.md)
 
 ## 许可证
 
