@@ -11,8 +11,13 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <!-- v3.0:AppShell 改为已发布包引用(Core/Services 走传递依赖) -->
-    <PackageReference Include="OneHistory.AppShell.Shell" Version="0.5.0" />
+    <!--
+      v3.0:AppShell 改为已发布包引用(Core/Services 走传递依赖)。
+      v3.4 V34-06:升到正式 0.7.2 —— 该版删除了固定主内容/工作页契约与 page.*,
+      舞台改为普通工具窗口注册(见 WBallWorkspaceViews 的 stage 描述符)。
+      桌面消费者只需引用 Shell;ServiceHost 是服务宿主消费者才需要的包,这里不引。
+    -->
+    <PackageReference Include="OneHistory.AppShell.Shell" Version="0.7.2" />
   </ItemGroup>
 
 </Project>

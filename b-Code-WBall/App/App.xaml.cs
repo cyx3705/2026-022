@@ -49,6 +49,7 @@ public partial class App : Application
         System.IO.Directory.CreateDirectory(scenesDir);
 
         MigrateLegacyPanels(paths, log);
+        MigrateStageWindowLayout(paths, log);
         SeedBattlePanel(paths, log);
         SeedEditorPanel(paths, log);
 
@@ -95,7 +96,7 @@ public partial class App : Application
             AppVersion = "3.3.0",
             DataService = dataService,
             Workspace = workspace,
-            MainContent = workspaceViews.MainContent,
+            // v3.4 V34-06:0.7.2 起没有 MainContent —— 舞台改为 id=stage 的工具窗口(见 ToolWindows)
             OnResourceOpen = path => TryOpenSceneFile(path, world, log, projection, scenesDir),
         };
 
@@ -250,6 +251,32 @@ public partial class App : Application
     }
 
     /// <summary>v2.8:一次性迁移 — 移除旧面板并重置停靠布局套用新默认。</summary>
+    /// <summary>
+    /// v3.4 V34-06:一次性布局迁移。0.5.0 时代舞台是 ShellConfig.MainContent(布局里是文档节点),
+    /// 0.7.2 起它是 id=stage 的工具窗口。旧布局没有 stage 节点,直接恢复会让新窗口落进退化尺寸
+    /// (实测只拿到 3% 高度);因此升级首启时丢弃旧停靠布局,套用新默认(舞台占中央列 74%)。
+    /// 只删布局文件,面板/场景/配置/剧本等用户数据一律不动 —— 与 v2.8 的迁移做法一致。
+    /// </summary>
+    private static void MigrateStageWindowLayout(AppPaths paths, ShellLog log)
+    {
+        try
+        {
+            var layout = System.IO.Path.Combine(paths.LayoutDir, "current.layout.xml");
+            if (!System.IO.File.Exists(layout))
+                return;
+            var xml = System.IO.File.ReadAllText(layout);
+            if (xml.Contains("ContentId=\"stage\"", StringComparison.Ordinal))
+                return;
+
+            System.IO.File.Delete(layout);
+            log.Info("app", "v3.4 舞台改为工具窗口:已重置停靠布局并套用新默认(仅布局,用户数据未动)");
+        }
+        catch (Exception ex)
+        {
+            log.Warn("app", $"舞台窗口布局迁移失败(将沿用现有布局): {ex.Message}");
+        }
+    }
+
     private static void MigrateLegacyPanels(AppPaths paths, ShellLog log)
     {
         try

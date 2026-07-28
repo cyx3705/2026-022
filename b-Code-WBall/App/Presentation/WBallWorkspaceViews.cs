@@ -73,8 +73,6 @@ internal sealed class WBallWorkspaceViews
         ToolWindows = CreateToolWindows();
     }
 
-    public object MainContent => _stageView;
-
     public StageState Stage { get; }
 
     public SceneWorld BattleWorld { get; }
@@ -106,6 +104,17 @@ internal sealed class WBallWorkspaceViews
 
     private IReadOnlyList<ToolWindowDescriptor> CreateToolWindows() =>
     [
+        // v3.4 V34-06:AppShell 0.7.2 删除了 ShellConfig.MainContent(中央区只剩无标签空背景),
+        // 对战舞台改为普通工具窗口。DockSide.Top 的窗格由 DockingHost 插进**中央列**,
+        // 因此舞台仍占据窗口中部;底部的表窗口/控制台同在中央列下方,布局观感与 0.5.0 时代一致。
+        new()
+        {
+            Id = "stage",
+            Title = "对战舞台",
+            DefaultSide = DockSide.Top,
+            DefaultRatio = 0.74,
+            ContentFactory = () => _stageView,
+        },
         new()
         {
             Id = "resource",
