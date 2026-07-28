@@ -1,10 +1,12 @@
 # v3.4 V34-08:格式门禁的唯一真相。`dotnet format --verify-no-changes` 以本文件为准。
-# 规则按现有代码风格标定(4 空格、file-scoped namespace、CRLF),不借格式门禁改写风格。
+# 规则按现有代码风格标定(4 空格、file-scoped namespace),不借格式门禁改写风格。
 root = true
 
 [*]
 charset = utf-8
-end_of_line = crlf
+# v3.4 V34-10:与 .gitattributes 的 `text eol=lf` 对齐(那是 OHS git.rule.* 认得的规范行)。
+# 两处必须同为 lf,否则干净 clone 后 dotnet format --verify-no-changes 会因行尾不符直接红。
+end_of_line = lf
 insert_final_newline = true
 trim_trailing_whitespace = true
 indent_style = space
