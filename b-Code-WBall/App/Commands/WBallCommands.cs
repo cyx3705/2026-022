@@ -10,7 +10,7 @@ using WBall.Sim;
 
 namespace WBall.Commands;
 
-/// <summary>WBall v1.6.2 指令: scene.* / ball.* / sim.* / formula.* / game.* / proj.*。</summary>
+/// <summary>WBall 指令: scene.* / ball.* / sim.* / formula.* / game.*(v3.4 取消数据库后 proj.* 一并移除)。</summary>
 public static class WBallCommands
 {
     public static void Register(
@@ -18,26 +18,25 @@ public static class WBallCommands
         SceneWorld world,
         IShellLog log,
         string scenesDirectory,
-        PropertyProjection projection,
+        ScenePropertyService sceneProperties,
         string? dataRoot = null)
     {
         Directory.CreateDirectory(scenesDirectory);
-        RegisterScene(registry, world, scenesDirectory, projection);
-        RegisterBall(registry, world, projection, log);
-        RegisterSim(registry, world, log, projection);
+        RegisterScene(registry, world, scenesDirectory, sceneProperties);
+        RegisterBall(registry, world, sceneProperties, log);
+        RegisterSim(registry, world, log, sceneProperties);
         RegisterFormula(registry, world, dataRoot);
         RegisterGame(registry, world, log);
-        RegisterProj(registry, projection);
         WireCommands.Register(registry, world);
         SolidCommands.Register(registry, world);
-        projection.RefreshScenes(scenesDirectory, world.LastScenePath);
+        sceneProperties.RefreshScenes(scenesDirectory, world.LastScenePath);
     }
 
     private static void RegisterScene(
         CommandRegistry registry,
         SceneWorld world,
         string scenesDirectory,
-        PropertyProjection projection)
+        ScenePropertyService sceneProperties)
     {
         registry.Register(new CommandDescriptor
         {
@@ -351,7 +350,7 @@ public static class WBallCommands
             RequiresUiThread = true,
             Handler = CommandDescriptor.Sync(_ =>
             {
-                var n = projection.RefreshScenes(scenesDirectory, world.LastScenePath);
+                var n = sceneProperties.RefreshScenes(scenesDirectory, world.LastScenePath);
                 return CommandResult.Ok($"已刷新 scenes 表: {n} 行");
             }),
         });
@@ -371,9 +370,9 @@ public static class WBallCommands
             {
                 try
                 {
-                    projection.RefreshScenes(scenesDirectory, world.LastScenePath);
-                    projection.RenameSceneFile(ctx.RequireString("file"), ctx.RequireString("name"));
-                    var n = projection.RefreshScenes(scenesDirectory, world.LastScenePath);
+                    sceneProperties.RefreshScenes(scenesDirectory, world.LastScenePath);
+                    sceneProperties.RenameSceneFile(ctx.RequireString("file"), ctx.RequireString("name"));
+                    var n = sceneProperties.RefreshScenes(scenesDirectory, world.LastScenePath);
                     return CommandResult.Ok($"已重命名 → {ctx.RequireString("name")} (scenes={n})");
                 }
                 catch (Exception ex)
@@ -429,7 +428,7 @@ public static class WBallCommands
                     world.NotifyChanged(markDirty: false);
                 }
 
-                projection.RefreshScenes(scenesDirectory, world.LastScenePath);
+                sceneProperties.RefreshScenes(scenesDirectory, world.LastScenePath);
                 return CommandResult.Ok("已新建空场景(已断开与原文件关联)");
             }),
         });
@@ -463,7 +462,7 @@ public static class WBallCommands
                         return CommandResult.Fail("请指定 file=,或先 load 过场景");
 
                     SceneStore.Save(world, path);
-                    projection.RefreshScenes(scenesDirectory, world.LastScenePath);
+                    sceneProperties.RefreshScenes(scenesDirectory, world.LastScenePath);
                     return CommandResult.Ok($"已保存场景 → {path} (对象 {world.Objects.Count}, 球 {world.Balls.Count})");
                 }
                 catch (Exception ex)
@@ -498,7 +497,7 @@ public static class WBallCommands
                     var verify = SceneStore.DiffAgainstFile(world, path);
                     if (verify.Count > 0)
                         return CommandResult.Fail($"加载后核对失败(不应发生):\n" + string.Join("\n", verify));
-                    projection.RefreshScenes(scenesDirectory, world.LastScenePath);
+                    sceneProperties.RefreshScenes(scenesDirectory, world.LastScenePath);
                     return CommandResult.Ok(
                         $"已加载并核对一致 ← {path} (对象 {world.Objects.Count}, 球 {world.Balls.Count}, 重力 {world.GravityG}g, 球碰 {(world.BallCollisionEnabled ? "开" : "关")})");
                 }
@@ -619,7 +618,7 @@ public static class WBallCommands
         return full;
     }
 
-    private static void RegisterBall(CommandRegistry registry, SceneWorld world, PropertyProjection projection, IShellLog log)
+    private static void RegisterBall(CommandRegistry registry, SceneWorld world, ScenePropertyService sceneProperties, IShellLog log)
     {
         registry.Register(new CommandDescriptor
         {
@@ -821,20 +820,19 @@ public static class WBallCommands
         registry.Register(new CommandDescriptor
         {
             Name = "ball.addprop",
-            Summary = "为小球投影表增加自定义列(不可为 color/weight/size/x/y)",
-            Example = "ball.addprop name=team type=TEXT",
+            Summary = "为小球登记自定义性质(不可为 color/weight/size/x/y)",
+            Example = "ball.addprop name=team",
             RequiresUiThread = true,
             Parameters =
             [
-                new ParameterSpec { Name = "name", Description = "列名", Required = true, Position = 0 },
-                new ParameterSpec { Name = "type", Description = "TEXT/REAL/INTEGER", Default = "TEXT" },
+                new ParameterSpec { Name = "name", Description = "性质名", Required = true, Position = 0 },
             ],
             Handler = CommandDescriptor.Sync(ctx =>
             {
                 try
                 {
-                    var name = projection.AddBallColumn(ctx.RequireString("name"), ctx.GetString("type") ?? "TEXT");
-                    return CommandResult.Ok($"已添加自定义列 {name};投影表已刷新");
+                    var name = sceneProperties.AddProperty(ctx.RequireString("name"));
+                    return CommandResult.Ok($"已登记自定义性质 {name}");
                 }
                 catch (Exception ex)
                 {
@@ -846,19 +844,19 @@ public static class WBallCommands
         registry.Register(new CommandDescriptor
         {
             Name = "ball.removeprop",
-            Summary = "删除小球自定义列(拒绝删除必修三列)",
+            Summary = "删除小球自定义性质(拒绝删除内建性质)",
             Example = "ball.removeprop name=team",
             RequiresUiThread = true,
             Parameters =
             [
-                new ParameterSpec { Name = "name", Description = "列名", Required = true, Position = 0 },
+                new ParameterSpec { Name = "name", Description = "性质名", Required = true, Position = 0 },
             ],
             Handler = CommandDescriptor.Sync(ctx =>
             {
                 try
                 {
-                    projection.RemoveBallColumn(ctx.RequireString("name"));
-                    return CommandResult.Ok("已删除自定义列并刷新投影");
+                    sceneProperties.RemoveProperty(ctx.RequireString("name"));
+                    return CommandResult.Ok("已删除自定义性质");
                 }
                 catch (Exception ex)
                 {
@@ -870,7 +868,7 @@ public static class WBallCommands
         registry.Register(new CommandDescriptor
         {
             Name = "ball.setprop",
-            Summary = "设置小球自定义列值(同步 SceneWorld + 投影表)",
+            Summary = "设置小球自定义性质值(直接写 SceneWorld)",
             Example = "ball.setprop id=ball1 name=team value=red",
             RequiresUiThread = true,
             Parameters =
@@ -889,9 +887,9 @@ public static class WBallCommands
                     || name.Equals("weight", StringComparison.OrdinalIgnoreCase)
                     || name.Equals("size", StringComparison.OrdinalIgnoreCase)
                     || name.Equals("multiplier", StringComparison.OrdinalIgnoreCase))
-                    return CommandResult.Fail("必修列请用 ball.set");
-                if (!projection.CustomBallColumns.Contains(name, StringComparer.OrdinalIgnoreCase))
-                    return CommandResult.Fail($"自定义列不存在,请先 ball.addprop name={name}");
+                    return CommandResult.Fail("内建性质请用 ball.set");
+                if (!sceneProperties.CustomProperties.Contains(name, StringComparer.OrdinalIgnoreCase))
+                    return CommandResult.Fail($"自定义性质不存在,请先 ball.addprop name={name}");
                 ball.Props[name] = ctx.RequireString("value");
                 world.NotifyChanged();
                 return CommandResult.Ok($"已设置 {ball.Id}.{name}");
@@ -1036,37 +1034,33 @@ public static class WBallCommands
         });
     }
 
-    private static void RegisterSim(CommandRegistry registry, SceneWorld world, IShellLog log, PropertyProjection projection)
+    private static void RegisterSim(CommandRegistry registry, SceneWorld world, IShellLog log, ScenePropertyService sceneProperties)
     {
         registry.Register(new CommandDescriptor
         {
             Name = "sim.play",
-            Summary = "开始仿真(播放中暂停投影写库)",
+            Summary = "开始仿真",
             Example = "sim.play",
             RequiresUiThread = true,
             Handler = CommandDescriptor.Sync(_ =>
             {
                 world.IsPlaying = true;
                 world.NotifyChanged(markDirty: false, visual: true, project: false);
-                return CommandResult.Ok("仿真播放(投影写库已暂停)");
+                return CommandResult.Ok("仿真播放");
             }),
         });
 
         registry.Register(new CommandDescriptor
         {
             Name = "sim.pause",
-            Summary = "暂停仿真并刷投影表",
+            Summary = "暂停仿真",
             Example = "sim.pause",
             RequiresUiThread = true,
             Handler = CommandDescriptor.Sync(_ =>
             {
                 world.IsPlaying = false;
-                projection.SyncFromWorld(force: true);
                 world.NotifyChanged(markDirty: false, visual: true, project: false);
-                return CommandResult.Ok(
-                    projection.IsProjectionPending
-                        ? "仿真暂停(投影仍有待同步)"
-                        : "仿真暂停(投影已同步)");
+                return CommandResult.Ok("仿真暂停");
             }),
         });
 
@@ -1204,7 +1198,6 @@ public static class WBallCommands
                 var json = JsonSerializer.Serialize(new
                 {
                     playing = world.IsPlaying,
-                    projectionPending = projection.IsProjectionPending,
                     gravityG = world.GravityG,
                     ballCollision = world.BallCollisionEnabled,
                     trail = world.TrailEnabled,
@@ -1220,32 +1213,6 @@ public static class WBallCommands
                 });
                 return CommandResult.Ok(json);
             }),
-        });
-    }
-
-    private static void RegisterProj(CommandRegistry registry, PropertyProjection projection)
-    {
-        registry.Register(new CommandDescriptor
-        {
-            Name = "proj.sync",
-            Summary = "强制将 SceneWorld 刷入 SQLite 投影表",
-            Example = "proj.sync",
-            RequiresUiThread = true,
-            Handler = CommandDescriptor.Sync(_ =>
-            {
-                projection.SyncFromWorld(force: true);
-                return CommandResult.Ok("投影已同步");
-            }),
-        });
-
-        registry.Register(new CommandDescriptor
-        {
-            Name = "proj.status",
-            Summary = "投影脏标记状态",
-            Example = "proj.status",
-            RequiresUiThread = true,
-            Handler = CommandDescriptor.Sync(_ =>
-                CommandResult.Ok(projection.IsProjectionPending ? "pending=true" : "pending=false")),
         });
     }
 

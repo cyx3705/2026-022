@@ -18,7 +18,6 @@ namespace AppShell.App;
 public partial class App : Application
 {
     private ShellLog? _log;
-    private WBallDataService? _data;
     private RenderJobService? _renderJobs;
 
     protected override void OnStartup(StartupEventArgs e)
@@ -39,9 +38,6 @@ public partial class App : Application
         };
         AppDomain.CurrentDomain.UnhandledException += (_, args) =>
             log.Log(ShellLogLevel.Fatal, "app", $"未处理异常(非 UI 线程): {args.ExceptionObject}");
-
-        var sqlite = new SqliteDataService(paths);
-        sqlite.RegisterConnection("main", "main.db");
 
         var workspaceRoot = settings.Get("workspace.root") ?? paths.WorkspaceDir;
         var workspace = new WorkspaceService(workspaceRoot);
@@ -77,9 +73,8 @@ public partial class App : Application
         var simulator = new BalanceSimulator(world, battleConfig, weapons, log);
         var renderTime = new RenderTimeConfigStore(paths.Root, log);
 
-        var projection = new PropertyProjection(sqlite, world, paths.Root);
-        var dataService = new WBallDataService(sqlite, projection);
-        _data = dataService;
+        // v3.4:取消数据库后,这里只剩"自定义性质登记 + 场景文件目录",无需 Dispose
+        var sceneProperties = new ScenePropertyService(world, paths.Root);
 
         var stageState = new StageState();
         var renderJobs = new RenderJobService(
@@ -94,17 +89,20 @@ public partial class App : Application
         {
             AppName = "WBall",
             AppVersion = "3.3.0",
-            DataService = dataService,
             Workspace = workspace,
+            // v3.4:取消数据库 —— 不再提供 DataService,于是 db.* 不注册、表窗口不存在。
+            // MCP 网关依赖 DataService(没有它框架会自动降级并告警),这里显式关掉,免得每次启动刷警告。
+            // 注意:模块托管(EnableModules)与数据库无关,保持框架默认(开),行为与 v3.3 一致。
+            EnableMcp = false,
             // v3.4 V34-06:0.7.2 起没有 MainContent —— 舞台改为 id=stage 的工具窗口(见 ToolWindows)
-            OnResourceOpen = path => TryOpenSceneFile(path, world, log, projection, scenesDir),
+            OnResourceOpen = path => TryOpenSceneFile(path, world, log, sceneProperties, scenesDir),
         };
 
         config.ToolWindows.AddRange(workspaceViews.ToolWindows);
 
         config.ConfigureCommands = registry =>
         {
-            WBallCommands.Register(registry, world, log, scenesDir, projection, paths.Root);
+            WBallCommands.Register(registry, world, log, scenesDir, sceneProperties, paths.Root);
             StageCommands.Register(registry, workspaceViews.Stage, world, workspaceViews.Battle);
             WeaponCommands.Register(registry, weapons);
             BattleCommands.Register(registry, workspaceViews.Battle, workspaceViews.BattleWorld, battleConfig);
@@ -205,7 +203,7 @@ public partial class App : Application
         string absolutePath,
         SceneWorld world,
         ShellLog log,
-        PropertyProjection projection,
+        ScenePropertyService sceneProperties,
         string scenesDirectory)
     {
         if (!absolutePath.EndsWith(".json", StringComparison.OrdinalIgnoreCase))
@@ -219,7 +217,7 @@ public partial class App : Application
 
             SceneStore.Load(world, absolutePath);
             var diffs = SceneStore.DiffAgainstFile(world, absolutePath);
-            projection.RefreshScenes(scenesDirectory, world.LastScenePath);
+            sceneProperties.RefreshScenes(scenesDirectory, world.LastScenePath);
             if (diffs.Count > 0)
             {
                 log.Warn("scene", $"加载后核对不一致: {string.Join("; ", diffs)}");
@@ -245,7 +243,6 @@ public partial class App : Application
     protected override void OnExit(ExitEventArgs e)
     {
         _renderJobs?.Dispose();
-        _data?.Dispose();
         _log?.Dispose();
         base.OnExit(e);
     }

@@ -106,7 +106,7 @@ internal sealed class WBallWorkspaceViews
     [
         // v3.4 V34-06:AppShell 0.7.2 删除了 ShellConfig.MainContent(中央区只剩无标签空背景),
         // 对战舞台改为普通工具窗口。DockSide.Top 的窗格由 DockingHost 插进**中央列**,
-        // 因此舞台仍占据窗口中部;底部的表窗口/控制台同在中央列下方,布局观感与 0.5.0 时代一致。
+        // 因此舞台仍占据窗口中部;控制台位于中央列下方。
         new()
         {
             Id = "stage",
@@ -124,17 +124,9 @@ internal sealed class WBallWorkspaceViews
         },
         new()
         {
-            Id = "table",
-            Title = "表窗口",
-            DefaultSide = DockSide.Bottom,
-            DefaultRatio = 0.28,
-        },
-        new()
-        {
             Id = "console",
             Title = "控制台",
-            DefaultSide = DockSide.Tab,
-            DefaultTabTarget = "table",
+            DefaultSide = DockSide.Bottom,
             DefaultRatio = 0.28,
         },
         // v2.8:调试三窗默认隐藏并合为一组标签,按需 win.show 唤出
