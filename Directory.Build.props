@@ -1,0 +1,31 @@
+<Project>
+
+  <!--
+    v3.4 V34-01/V34-08:根级统一构建策略。
+    两个工程(App / WBallVerify)以前各写一份 TFM、Nullable、ImplicitUsings,
+    改一处策略要改两处;此处集中,子工程只保留自己独有的属性。
+  -->
+  <PropertyGroup>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <InvariantGlobalization>false</InvariantGlobalization>
+  </PropertyGroup>
+
+  <!-- 质量门禁:警告即错误(Debug/Release 同策略),分析器全开 -->
+  <PropertyGroup>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <EnableNETAnalyzers>true</EnableNETAnalyzers>
+    <AnalysisLevel>latest</AnalysisLevel>
+    <EnforceCodeStyleInBuild>false</EnforceCodeStyleInBuild>
+  </PropertyGroup>
+
+  <!-- 可复现构建:不依赖仓库内历史 obj,输出路径由各工程默认约定(已进 .gitignore) -->
+  <PropertyGroup>
+    <Deterministic>true</Deterministic>
+    <ProduceReferenceAssembly>true</ProduceReferenceAssembly>
+    <GenerateDocumentationFile>false</GenerateDocumentationFile>
+  </PropertyGroup>
+
+</Project>

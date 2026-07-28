@@ -1,10 +1,8 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
+  <!-- v3.4:TFM/Nullable/ImplicitUsings/警告策略统一由根 Directory.Build.props 提供 -->
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
-    <TargetFramework>net8.0-windows</TargetFramework>
-    <Nullable>enable</Nullable>
-    <ImplicitUsings>enable</ImplicitUsings>
     <UseWPF>true</UseWPF>
     <RootNamespace>AppShell.App</RootNamespace>
     <AssemblyName>WBall</AssemblyName>
