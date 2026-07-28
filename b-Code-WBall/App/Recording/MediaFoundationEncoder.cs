@@ -5,7 +5,9 @@ namespace WBall.Recording;
 
 /// <summary>
 /// Windows Media Foundation Sink Writer 尽力编码 H.264(无 NuGet)。
-/// COM 失败时抛错,由 StageRecorder 降级 PNG。
+/// COM 失败时抛错,由 <see cref="RenderJobService"/> 降级 PNG 帧序列。
+/// v3.4 V34-04:唯一入口是 <see cref="Open"/> 的流式 FrameWriter —— 一次性收全部 BGRA 帧
+/// 再编码的批量入口(EncodeBgraFrames)已随 StageRecorder 一并删除,那条路会把整段视频驻留内存。
 /// </summary>
 internal static class MediaFoundationEncoder
 {
@@ -23,23 +25,6 @@ internal static class MediaFoundationEncoder
     private static readonly Guid AttrBitrate = new("20332624-FB0D-4D9E-BD0D-CBF6786C102E");
     private static readonly Guid AttrInterlace = new("E2724BB8-E676-4806-B4B2-A8D6EFC6030C");
     private static readonly Guid AttrStride = new("644B4E48-1E28-435B-874A-0DB6AE9A8B48");
-
-    public static void EncodeBgraFrames(
-        IReadOnlyList<byte[]> frames,
-        string mp4Path,
-        int fps,
-        int width,
-        int height,
-        IShellLog log)
-    {
-        if (frames.Count == 0)
-            throw new InvalidOperationException("无帧可编码");
-
-        using var writer = Open(mp4Path, fps, width, height, log);
-        foreach (var frame in frames)
-            writer.WriteFrame(frame);
-        writer.Complete();
-    }
 
     public static FrameWriter Open(string mp4Path, int fps, int width, int height, IShellLog log) =>
         new(mp4Path, fps, width, height, log);
@@ -243,7 +228,8 @@ internal static class MediaFoundationEncoder
         [PreserveSig] int SetUINT32([In][MarshalAs(UnmanagedType.LPStruct)] Guid guidKey, int unValue);
         [PreserveSig] int SetUINT64([In][MarshalAs(UnmanagedType.LPStruct)] Guid guidKey, ulong unValue);
         void SetDouble();
-        [PreserveSig] int SetGUID(
+        [PreserveSig]
+        int SetGUID(
             [In][MarshalAs(UnmanagedType.LPStruct)] Guid guidKey,
             [In][MarshalAs(UnmanagedType.LPStruct)] Guid guidValue);
     }
