@@ -15,19 +15,17 @@ using WBall.Recording;
 using WBall.Stage;
 using WBall.Verify;
 
-var failures = new List<string>();
 // v3.4 V34-02:产物根由 using(try/finally)托管 —— 通过即清理,失败保留并打印路径。
 // --keep-artifacts 强制保留;--artifact-root <path> 换根。
-using var artifacts = VerifyArtifacts.Create(args, () => failures.Count == 0);
-var dataRoot = artifacts.Root;
-var log = new NullLog();
+// v3.4 V34-09:断言与共享上下文搬进 VerifyRun;suite 正逐个搬进 Suites/(先 timeline 与 page)。
+VerifyRun? run = null;
+using var artifacts = VerifyArtifacts.Create(args, () => run?.Passed != false);
+run = new VerifyRun(artifacts.Root, artifacts);
+var failures = run.Failures;
+var dataRoot = run.Root;
+var log = run.Log;
 
-void Check(string name, bool passed, string? detail = null)
-{
-    Console.WriteLine($"{(passed ? "PASS" : "FAIL")} {name}" + (detail == null ? "" : $": {detail}"));
-    if (!passed)
-        failures.Add(name + (detail == null ? "" : $": {detail}"));
-}
+void Check(string name, bool passed, string? detail = null) => run!.Check(name, passed, detail);
 
 string RunHash(BalanceConfig balance, int seed, int frames, out Harness harness)
 {
@@ -37,77 +35,10 @@ string RunHash(BalanceConfig balance, int seed, int frames, out Harness harness)
     return harness.Director.DeterministicHash();
 }
 
-foreach (var fps in new[] { 24, 25, 30, 50, 60 })
-{
-    var timeline = new TimelineClock(new RenderTimeConfig { PreviewAutoSlow = false }, autoSlow: false);
-    var advanced = 0;
-    for (var frame = 0; frame < fps * 10; frame++)
-        advanced += timeline.AdvanceOutputFrame(fps, 0);
-    Check($"timeline exact {fps}fps", Math.Abs(advanced / 60.0 - 10) <= 1.0 / 60,
-        $"steps={advanced} simulation={advanced / 60.0:0.######}");
-}
-var slowTimeline = new TimelineClock(new RenderTimeConfig(), autoSlow: true);
-Check("timeline auto scale starts at 1x", slowTimeline.ResolveScale(2_000) == 1);
-Check("timeline auto scale reaches minimum", slowTimeline.ResolveScale(10_000) == 0.25);
-slowTimeline.Reset();
-var slowSteps = 0;
-for (var frame = 0; frame < 60; frame++)
-    slowSteps += slowTimeline.AdvanceOutputFrame(60, 10_000);
-Check("timeline 10k balls advances 0.25x", slowSteps == 15, $"steps={slowSteps}");
-var manualTimeline = new TimelineClock(new RenderTimeConfig { ManualSimulationScale = 1.5 }, autoSlow: false);
-Check("timeline manual scale ignores ball count", manualTimeline.ResolveScale(100_000) == 1.5);
+WBall.Verify.Suites.TimelineSuite.Run(run);
 
 if (args.Contains("--render-page-smoke", StringComparer.OrdinalIgnoreCase))
-{
-    Exception? pageError = null;
-    string? pagePath = null;
-    double horizontalOverflow = double.NaN;
-    var pageThread = new Thread(() =>
-    {
-        try
-        {
-            var pageRoot = artifacts.Suite("page-smoke");
-            var pageHarness = new Harness(dataRoot, log, new BalanceConfig());
-            var pageConfig = new RenderTimeConfigStore(Path.Combine(pageRoot, "config"), log);
-            var pageWorkspace = Path.Combine(pageRoot, "workspace");
-            var pageScenarios = new ScenarioStore(pageWorkspace, log);
-            using var pageService = new RenderJobService(
-                pageHarness.EconomyWorld, pageHarness.BattleConfig, pageHarness.BalanceStore,
-                pageHarness.Weapons, new StageState(), pageScenarios, pageConfig,
-                dataRoot, pageWorkspace, log);
-            var view = new RenderSettingsView(pageService) { Width = 300, Height = 720 };
-            view.Measure(new Size(300, 720));
-            view.Arrange(new Rect(0, 0, 300, 720));
-            view.UpdateLayout();
-            var scroll = FindVisualChild<System.Windows.Controls.ScrollViewer>(view)
-                         ?? throw new InvalidOperationException("render page ScrollViewer missing");
-            horizontalOverflow = scroll.ScrollableWidth;
-            var bitmap = new RenderTargetBitmap(300, 720, 96, 96, PixelFormats.Pbgra32);
-            bitmap.Render(view);
-            var encoder = new PngBitmapEncoder();
-            encoder.Frames.Add(BitmapFrame.Create(bitmap));
-            pagePath = Path.Combine(pageRoot, "render-page-300x720.png");
-            using var stream = File.Create(pagePath);
-            encoder.Save(stream);
-        }
-        catch (Exception ex)
-        {
-            pageError = ex;
-        }
-    });
-    pageThread.SetApartmentState(ApartmentState.STA);
-    pageThread.Start();
-    pageThread.Join();
-    Check("render page 300px layout has no horizontal overflow",
-        pageError == null && horizontalOverflow < 0.5,
-        pageError?.ToString() ?? $"overflow={horizontalOverflow:0.###}");
-    Check("render page 300px visual snapshot is non-empty",
-        pagePath != null && File.Exists(pagePath) && new FileInfo(pagePath).Length > 1_000,
-        pagePath ?? pageError?.Message);
-    if (pagePath != null)
-        Console.WriteLine($"render page snapshot: {pagePath}");
-    return failures.Count == 0 ? 0 : 1;
-}
+    return WBall.Verify.Suites.PageSuite.Run(run);
 
 if (args.Contains("--render-smoke", StringComparer.OrdinalIgnoreCase))
 {
@@ -1014,73 +945,4 @@ static double MeasureAssistSteps(
         harness.Battle.Step(1.0 / 60);
     watch.Stop();
     return watch.Elapsed.TotalMilliseconds / measuredSteps;
-}
-
-static T? FindVisualChild<T>(DependencyObject root) where T : DependencyObject
-{
-    for (var i = 0; i < VisualTreeHelper.GetChildrenCount(root); i++)
-    {
-        var child = VisualTreeHelper.GetChild(root, i);
-        if (child is T match)
-            return match;
-        var nested = FindVisualChild<T>(child);
-        if (nested != null)
-            return nested;
-    }
-    return null;
-}
-
-sealed class Harness
-{
-    public Harness(
-        string dataRoot,
-        IShellLog log,
-        BalanceConfig balance,
-        ArenaLayoutConfig? arena = null)
-    {
-        BattleConfig = BattleConfigStore.CreateMemory(
-            Demo4Turrets(), arena ?? new ArenaLayoutConfig(), log);
-        BalanceStore = BalanceConfigStore.CreateMemory(balance, log);
-        Weapons = new WeaponCatalog(dataRoot, log);
-        EconomyWorld = new SceneWorld();
-        var scenes = Path.Combine(dataRoot, "scenes");
-        SceneStore.Load(EconomyWorld, PlinkoDemoSeeder.EnsureScene(scenes, log));
-        Bridge = new EconomyBridge(Weapons, log, BalanceStore);
-        EconomyWorld.Settlements = Bridge;
-        BattleWorld = new SceneWorld { Defaults = EconomyWorld.Defaults, GravityG = 0 };
-        Battle = new BattleRuntime(EconomyWorld, BattleWorld, BattleConfig, Weapons, log, BalanceStore);
-        Director = new BattleDirector(
-            EconomyWorld, BattleWorld, Battle, Weapons, Bridge, new StageState(), log, BalanceStore);
-        InitialTerritoryChecksum = Battle.TerritoryChecksum();
-    }
-
-    public SceneWorld EconomyWorld { get; }
-    public SceneWorld BattleWorld { get; }
-    public BattleConfigStore BattleConfig { get; }
-    public BalanceConfigStore BalanceStore { get; }
-    public WeaponCatalog Weapons { get; }
-    public EconomyBridge Bridge { get; }
-    public BattleRuntime Battle { get; }
-    public BattleDirector Director { get; }
-    public int InitialTerritoryChecksum { get; }
-
-    private static IReadOnlyList<TurretDefinition> Demo4Turrets() =>
-    [
-        new() { Id = "green", Name = "Caleb", Color = "#22C55E", Quadrant = 2, InitialBalls = 4, InitialShield = 2_000_000 },
-        new() { Id = "cyan", Name = "Xiaolin", Color = "#06B6D4", Quadrant = 1, InitialBalls = 4, InitialShield = 2_000_000 },
-        new() { Id = "orange", Name = "Diu", Color = "#F97316", Quadrant = 3, InitialBalls = 4, InitialShield = 2_000_000 },
-        new() { Id = "magenta", Name = "Wemmbu", Color = "#EC4899", Quadrant = 4, InitialBalls = 4, InitialShield = 2_000_000 },
-    ];
-}
-
-sealed class NullLog : IShellLog
-{
-    public event EventHandler<ShellLogEntry>? EntryAdded { add { } remove { } }
-    public void Log(ShellLogLevel level, string category, string message) { }
-    public IReadOnlyList<ShellLogEntry> Snapshot() => [];
-}
-
-sealed class CallbackProgress(Action<string> callback) : IProgress<string>
-{
-    public void Report(string value) => callback(value);
 }

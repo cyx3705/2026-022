@@ -35,12 +35,50 @@
 | B | 整个 `Unused/b-EPLAN` 保持跟踪，并在 `.gitattributes` 标 `binary` | 仓库继续背 68 MB，但 EPLAN 模板随仓库可复现 |
 | C | 移出仓库另存（外部模板库） | 仓库最干净，但模板不再随项目走 |
 
-## 3. `git.rule.scan` 未决数归零的口径
+## 3. `git.rule.scan` 实测与"未决为 0"能否达成
 
-v3.4 §4.7.5 要求 OHS `git.rule.scan` 未决为 0。本台账覆盖的是**仓库侧**：所有实际格式都已有
-`.gitattributes` / `.gitignore` 明文规则。扫描器本身属 OHS（2026-020）工具链，需在 OHS 里对
-本仓库跑一次 `git.rule.scan` 确认口径一致 —— 该步骤不在 022 工作树内，需在 OHS 侧执行。
-若扫描器把 §2 的 248 个文件计为未决，按 §2 方案 A 处置后即归零。
+已通过 MCP 连上运行中的 OneHistoryStudio 2.7.3（`POST http://127.0.0.1:8737/mcp`，JSON-RPC）
+实跑 `git_rule_scan` / `git_rule_gaps` / `git_rule_suggest` / `git_rule_list`。实测：
+
+| 时点 | 覆盖率 | 未决文件 |
+|---|---:|---:|
+| 本轮开工前 | 75.3% | 137 |
+| 文本格式改用规范行 `text eol=lf` 后 | **95.3%** | **26** |
+
+### 3.1 扫描器只认两种规范行（这是上一版规则失效的原因）
+
+`GitFileRuleService.ParseCanonicalAttribute` 用 `SetEquals` 精确比对属性集合，只接受：
+
+- LFS：`filter=lfs diff=lfs merge=lfs -text`
+- LF：`text eol=lf`
+
+`text eol=crlf`、`-text`、`binary` 一律解析为 null → 该格式记为"未决"。所以规则要被扫描器认，
+必须逐字使用上面两种写法（`.editorconfig` 的 `end_of_line` 必须同步为 `lf`，否则格式门禁会红）。
+
+### 3.2 剩余 26 个未决为什么不能归零
+
+剩下的全是二进制与无扩展名文件：`*.zip`(4)、无扩展名(3)、`*.schdocpreview`(2)，
+以及 `*.pcbdoc/*.pcblib/*.prjpcb/*.prjpcbstructure/*.schdoc/*.schlib/*.dwg/*.prt/*.asm/*.cfg/*.par/
+*.sldasm/*.sldprt/*.mcam/*.xlsx/*.doc/*.pptx` 各 1 个。
+
+`git_rule_suggest` 对它们的建议是"**Git**（二进制，直接入库）"，即 `track=true, lfs=false, lf=false`。
+但该组合在扫描器**自己的写入路径**里写不出任何行 —— `GitFileRuleService.SetAsync` 只在
+`track && lfs` 或 `track && lf` 时才往 `.gitattributes` 追加行；两者都为 false 时既不写属性、
+也不写忽略，于是 `ReadDefinitions` 读不到声明，该格式必然回到"未决"。
+
+旁证：OHS 自家的 `0000-000-Template` 项目实测也是 **86.8% 覆盖 / 38 未决**，未决项同样是
+`*.md`(已在 022 修好)、`*.zip`、`*.pcbdoc` 这一类。所以"未决为 0"在当前工具模型下，
+对含二进制资产的项目并不可达。
+
+### 3.3 若要强行归零：唯一可表达的办法是 LFS（待拍板）
+
+把这 17 种 CAD/Office 二进制格式声明为 LFS 规范行即可被扫描器认成"已跟踪管"，代价：
+
+- 这些文件（`Unused/` 下的模板占位件，合计约 1.2 MB）改为 LFS 指针存储；
+- 需要 `git lfs` 在每台检出机器上可用（本仓库 baseline 已对视频/PDF 用 LFS，前提已具备）。
+
+本期未做：v3.4 §2.2 规定不借质量修复之名改动无关资产；这 26 个文件与 WBall 产品代码无关。
+需要归零就一句话，我按 LFS 规范行补上并重跑扫描。
 
 ## 4. 规则维护纪律
 
