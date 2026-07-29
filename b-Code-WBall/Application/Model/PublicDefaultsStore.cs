@@ -48,6 +48,16 @@ public static class PublicDefaultsStore
     {
         Directory.CreateDirectory(dataRoot);
         var path = Path.Combine(dataRoot, NewFileName);
-        File.WriteAllText(path, JsonSerializer.Serialize(defaults, JsonOptions));
+        var temporaryPath = path + ".tmp";
+        try
+        {
+            File.WriteAllText(temporaryPath, JsonSerializer.Serialize(defaults, JsonOptions));
+            File.Move(temporaryPath, path, overwrite: true);
+        }
+        finally
+        {
+            if (File.Exists(temporaryPath))
+                File.Delete(temporaryPath);
+        }
     }
 }

@@ -16,6 +16,7 @@ public sealed class RefereeView : UserControl, ICommandBusAware
     private CommandBus? _bus;
     private readonly StackPanel _list;
     private readonly TextBlock _status;
+    private readonly TextBlock _result;
 
     public RefereeView(SceneWorld world)
     {
@@ -32,12 +33,19 @@ public sealed class RefereeView : UserControl, ICommandBusAware
 
         _status = new TextBlock { Text = "—", Margin = new Thickness(0, 0, 0, 8), TextWrapping = TextWrapping.Wrap };
         root.Children.Add(_status);
+        _result = new TextBlock
+        {
+            Margin = new Thickness(0, 0, 0, 8),
+            TextWrapping = TextWrapping.Wrap,
+            Foreground = Brushes.Gray,
+        };
+        root.Children.Add(_result);
 
         var btnRow = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 0, 0, 8) };
         var startBtn = new Button { Content = "开局 game.start", Padding = new Thickness(10, 6, 10, 6), Margin = new Thickness(0, 0, 8, 0) };
-        startBtn.Click += (_, _) => Run("game.start");
+        startBtn.Click += async (_, _) => await RunAsync("game.start");
         var resetBtn = new Button { Content = "重置积分", Padding = new Thickness(10, 6, 10, 6), Margin = new Thickness(0, 0, 8, 0) };
-        resetBtn.Click += (_, _) => Run("game.resetscore");
+        resetBtn.Click += async (_, _) => await RunAsync("game.resetscore");
         var refreshBtn = new Button { Content = "刷新", Padding = new Thickness(10, 6, 10, 6) };
         refreshBtn.Click += (_, _) => Refresh();
         btnRow.Children.Add(startBtn);
@@ -113,20 +121,9 @@ public sealed class RefereeView : UserControl, ICommandBusAware
             var colorBox = MakeBox(f.Color, 72);
             var apply = new Button { Content = "应用", Padding = new Thickness(8, 2, 8, 2), Margin = new Thickness(4, 0, 0, 0) };
             var factionId = f.Id;
-            apply.Click += (_, _) =>
-            {
-                var faction = _world.FindFaction(factionId);
-                if (faction == null)
-                    return;
-                if (int.TryParse(ballsBox.Text, NumberStyles.Integer, CultureInfo.InvariantCulture, out var ib))
-                    faction.InitialBalls = Math.Max(0, ib);
-                if (long.TryParse(multBox.Text, NumberStyles.Integer, CultureInfo.InvariantCulture, out var im))
-                    faction.InitialMultiplier = PublicDefaults.ClampMultiplier(im);
-                if (!string.IsNullOrWhiteSpace(colorBox.Text))
-                    faction.Color = colorBox.Text.Trim();
-                _world.NotifyChanged(markDirty: false);
-                Refresh();
-            };
+            apply.Click += async (_, _) => await RunAsync(
+                $"faction.set id={factionId} balls={ballsBox.Text.Trim()} "
+                + $"multiplier={multBox.Text.Trim()} color={colorBox.Text.Trim()}");
             editRow.Children.Add(new TextBlock { Text = "球数", VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 0, 4, 0) });
             editRow.Children.Add(ballsBox);
             editRow.Children.Add(new TextBlock { Text = "倍率", VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(8, 0, 4, 0) });
@@ -149,11 +146,18 @@ public sealed class RefereeView : UserControl, ICommandBusAware
             VerticalContentAlignment = VerticalAlignment.Center,
         };
 
-    private void Run(string cmd)
+    private async Task RunAsync(string command)
     {
         if (_bus == null)
+        {
+            _result.Text = "命令总线尚未连接";
+            _result.Foreground = Brushes.Firebrick;
             return;
-        _ = _bus.ExecuteAsync(cmd, "UI");
+        }
+
+        var result = await _bus.ExecuteAsync(command, "UI");
+        _result.Text = result.Message;
+        _result.Foreground = result.Success ? Brushes.SeaGreen : Brushes.Firebrick;
     }
 
     private static Color ParseColor(string hex)

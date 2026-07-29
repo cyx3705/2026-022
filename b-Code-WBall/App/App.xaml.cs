@@ -7,6 +7,7 @@ using AppShell.Shell;
 using WBall.Battle;
 using WBall.Commands;
 using WBall.Data;
+using WBall.Editing;
 using WBall.Game;
 using WBall.Model;
 using WBall.Presentation;
@@ -79,6 +80,9 @@ public partial class App : Application
 
         // v3.4:取消数据库后,这里只剩"自定义性质登记 + 场景文件目录",无需 Dispose
         var sceneProperties = new ScenePropertyService(world, paths.Root);
+        var ballEditor = new BallEditorService(world);
+        var formulaEditor = new FormulaEditorService(world, paths.Root);
+        var factionEditor = new FactionEditorService(world);
 
         var stageState = new StageState();
         var renderJobs = new RenderJobService(
@@ -105,7 +109,9 @@ public partial class App : Application
 
         config.ConfigureCommands = registry =>
         {
-            WBallCommands.Register(registry, world, log, scenesDir, sceneProperties, paths.Root);
+            WBallCommands.Register(
+                registry, world, log, scenesDir, sceneProperties,
+                ballEditor, formulaEditor, factionEditor);
             StageCommands.Register(registry, workspaceViews.Stage, world, workspaceViews.Battle);
             WeaponCommands.Register(registry, weapons);
             BattleCommands.Register(registry, workspaceViews.Battle, workspaceViews.BattleWorld, battleConfig);
@@ -308,7 +314,7 @@ public partial class App : Application
                     { "type": "button", "label": "战斗平衡", "command": "win.show name=balance" },
                     { "type": "button", "label": "对战区一览", "command": "arena.config" },
                     { "type": "button", "label": "编辑工具", "command": "panel.show id=editor" },
-                    { "type": "button", "label": "调试窗", "command": "win.show name=objdebug" }
+                    { "type": "button", "label": "场景调试", "command": "win.show name=scenedebug" }
                   ]
                 }
                 """);
@@ -368,10 +374,8 @@ public partial class App : Application
                     { "type": "number", "id": "worldH", "label": "高", "min": 200, "max": 4000, "step": 50, "default": "900" },
                     { "type": "button", "label": "应用尺寸", "command": "scene.size w={worldW} h={worldH}" },
                     { "type": "button", "label": "新建场景", "command": "scene.new", "style": "danger" },
-                    { "type": "label", "id": "dbglbl", "label": "调试窗", "default": "按需唤出" },
-                    { "type": "button", "label": "对象调试", "command": "win.show name=objdebug" },
-                    { "type": "button", "label": "小球窗", "command": "win.show name=ballpanel" },
-                    { "type": "button", "label": "裁判区", "command": "win.show name=referee" }
+                    { "type": "label", "id": "dbglbl", "label": "调试", "default": "对象、小球与裁判" },
+                    { "type": "button", "label": "场景调试", "command": "win.show name=scenedebug" }
                   ]
                 }
                 """);

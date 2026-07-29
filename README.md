@@ -8,9 +8,10 @@ WBall 是一个基于 .NET 8、WPF 与 OneHistory AppShell 的可配置落球对
 
 ## 当前状态
 
-- 当前应用版本：`3.4.0`
+- 当前应用版本：`3.5.0`
 - 当前代码基线：v3.2.1「离线出片与时间模块」和 v3.3「同阵营积分传递与升格弹回收」已交付
 - v3.4「工程卫生与质量修复」已完成：核心逻辑与 WPF/AppShell 分层，构建、格式、确定性、出片和页面门禁均已通过
+- v3.5「开发敏捷化与场景调试」已完成：新增 Core/Application 快速验证，编辑写入统一走 CommandBus，并以默认右侧的「场景调试」窗口整合对象、小球与公式、裁判功能
 - v3.1 回退兼容：关闭三项 v3.2 默认玩法变更后，留档哈希逐字一致
 - 平台：Windows、`.NET 8`、WPF
 - 框架：`OneHistory.AppShell.Shell 3.0.3`（最终冻结契约，权威项目 `2026-023-AppShell`）
@@ -45,6 +46,7 @@ b-Code-WBall/
   App/                    WPF/AppShell 桌面组合根与出片适配
   WBall.sln               Visual Studio 解决方案
 b-Code-Verify/
+  WBallFastVerify/        纯 Core/Application 的快速验证器
   WBallVerify/            确定性与整局模拟验证器
 b-Office/                 需求、版本方案和开发约束
 b-Picture/                图片素材
@@ -108,6 +110,7 @@ balance.sim seeds=42..49 seconds=180 config=current format=table
 preset.list
 win.show name=balance
 balance.assist
+win.show name=scenedebug
 win.show name=render
 render.config
 render.start mode=output seconds=60 seed=42 name=demo
@@ -132,9 +135,17 @@ render.status
 
 ## 验证
 
+日常开发先运行不加载 WPF/AppShell 的 Fast 验证：
+
+```powershell
+dotnet run --project .\b-Code-Verify\WBallFastVerify\WBallFastVerify.csproj -c Release
+```
+
+合并与版本收口再运行完整桌面回归：
+
 ```powershell
 $env:DOTNET_EnableWriteXorExecute='0'
-dotnet run --project .\b-Code-Verify\WBallVerify\WBallVerify.csproj -c Debug
+dotnet run --project .\b-Code-Verify\WBallVerify\WBallVerify.csproj -c Release
 ```
 
 验证器覆盖 v3.1/v3.2 回退、v3.3 同种子确定性、ProjectileRole、同阵营共享速率与积分守恒、升格梯度、超 512 队列、护盾、触杀、硬时限、剧本/预设、无头试跑，以及 `balance.*` / `preset.*` 命令烟测。`--render-smoke` 还验证双线程有界流水线、同输入抽样帧哈希、命名场景隔离、暂停/取消、PNG/MP4 降级和 1 万球自动降速/内存红线。
@@ -179,6 +190,7 @@ WBall 应用层可以自由扩展，但 AppShell 的指令语法、公共契约�
 - [`b-Office/WBall_v3.2.1_结果导向离线出片与时间模块需求.md`](./b-Office/WBall_v3.2.1_结果导向离线出片与时间模块需求.md)
 - [`b-Office/WBall_v3.3_同阵营积分传递与升格弹回收需求.md`](./b-Office/WBall_v3.3_同阵营积分传递与升格弹回收需求.md)
 - [`b-Office/WBall_v3.4_工程卫生与质量修复需求.md`](./b-Office/WBall_v3.4_工程卫生与质量修复需求.md)
+- [`b-Office/WBall_v3.5_开发敏捷化与场景调试需求.md`](./b-Office/WBall_v3.5_开发敏捷化与场景调试需求.md)
 
 ## 许可证
 

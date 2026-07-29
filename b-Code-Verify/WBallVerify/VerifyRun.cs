@@ -15,6 +15,7 @@ namespace WBall.Verify;
 internal sealed class VerifyRun
 {
     private readonly List<string> _failures = [];
+    private int _checkCount;
 
     public VerifyRun(string dataRoot, VerifyArtifacts artifacts)
     {
@@ -33,9 +34,14 @@ internal sealed class VerifyRun
 
     public bool Passed => _failures.Count == 0;
 
+    public int CheckCount => _checkCount;
+
+    public int PassedCount => _checkCount - _failures.Count;
+
     /// <summary>断言一项并即时打印(输出格式与 v3.3 逐字一致,回归对比靠它)。</summary>
     public void Check(string name, bool passed, string? detail = null)
     {
+        _checkCount++;
         Console.WriteLine($"{(passed ? "PASS" : "FAIL")} {name}" + (detail == null ? "" : $": {detail}"));
         if (!passed)
             _failures.Add(name + (detail == null ? "" : $": {detail}"));

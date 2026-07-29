@@ -29,15 +29,41 @@ on:
       - "nuget.config"
       - ".github/workflows/ci.yml"
   workflow_dispatch:
+    inputs:
+      release_acceptance:
+        description: Run long render and assist performance acceptance
+        required: false
+        default: false
+        type: boolean
 
 env:
   # 本机血泪(见《二次开发演进手册》):CET 环境下必须关掉 W^X,否则 JIT 崩
   DOTNET_EnableWriteXorExecute: "0"
   SOLUTION: b-Code-WBall/WBall.sln
+  FAST_PROJECT: b-Code-Verify/WBallFastVerify/WBallFastVerify.csproj
   VERIFY_EXE: b-Code-Verify/WBallVerify/bin/Release/net8.0-windows/WBallVerify.exe
 
 jobs:
-  gate:
+  fast:
+    name: Fast verification
+    runs-on: windows-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+
+      - name: Restore Core/Application verifier
+        run: dotnet restore ${{ env.FAST_PROJECT }}
+
+      - name: Run Core/Application verifier
+        run: dotnet run --project ${{ env.FAST_PROJECT }} -c Release --no-restore
+
+  full:
+    name: Full desktop verification
+    needs: fast
     # WPF + Media Foundation:必须 Windows
     runs-on: [self-hosted, windows]
     timeout-minutes: 60
@@ -90,3 +116,24 @@ jobs:
           name: wball-verify-artifacts
           path: ${{ runner.temp }}/wball_verify_v34_*
           if-no-files-found: ignore
+
+  release_acceptance:
+    name: Release acceptance
+    needs: full
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.release_acceptance }}
+    runs-on: [self-hosted, windows]
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Restore
+        run: dotnet restore ${{ env.SOLUTION }}
+
+      - name: Build Release
+        run: dotnet build ${{ env.SOLUTION }} -c Release --no-restore
+
+      - name: Assist performance acceptance
+        run: ${{ env.VERIFY_EXE }} --assist-performance
+
+      - name: Long render acceptance
+        run: ${{ env.VERIFY_EXE }} --render-long-acceptance

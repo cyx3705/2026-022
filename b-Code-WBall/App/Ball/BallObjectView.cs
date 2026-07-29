@@ -12,9 +12,9 @@ namespace WBall.BallUi;
 public sealed class BallObjectView : UserControl, ICommandBusAware
 {
     private readonly SceneWorld _world;
-    private readonly string _dataRoot;
     private CommandBus? _bus;
     private readonly TextBlock _ballStatus;
+    private readonly TextBlock _result;
     private readonly TextBox _idBox;
     private readonly TextBox _colorBox;
     private readonly TextBox _multBox;
@@ -30,10 +30,9 @@ public sealed class BallObjectView : UserControl, ICommandBusAware
     private TextBlock _formulaHint = null!;
     private bool _suppress;
 
-    public BallObjectView(SceneWorld world, string dataRoot)
+    public BallObjectView(SceneWorld world)
     {
         _world = world;
-        _dataRoot = dataRoot;
 
         var root = new DockPanel { Margin = new Thickness(10) };
 
@@ -58,6 +57,13 @@ public sealed class BallObjectView : UserControl, ICommandBusAware
             TextWrapping = TextWrapping.Wrap,
         };
         ballPanel.Children.Add(_ballStatus);
+        _result = new TextBlock
+        {
+            Margin = new Thickness(0, 0, 0, 8),
+            TextWrapping = TextWrapping.Wrap,
+            Foreground = Brushes.Gray,
+        };
+        ballPanel.Children.Add(_result);
 
         _idBox = AddRow(ballPanel, "Id", readOnly: true);
         _colorBox = AddRow(ballPanel, "颜色");
@@ -71,7 +77,7 @@ public sealed class BallObjectView : UserControl, ICommandBusAware
             Margin = new Thickness(0, 10, 0, 0),
             Padding = new Thickness(10, 6, 10, 6),
         };
-        applyBall.Click += (_, _) => ApplyBall();
+        applyBall.Click += async (_, _) => await ApplyBallAsync();
         ballPanel.Children.Add(applyBall);
 
         root.Children.Add(new ScrollViewer
@@ -159,13 +165,13 @@ public sealed class BallObjectView : UserControl, ICommandBusAware
             Margin = new Thickness(0, 0, 8, 0),
             Padding = new Thickness(10, 6, 10, 6),
         };
-        saveBtn.Click += (_, _) => SaveFormula(recalcAll: false);
+        saveBtn.Click += async (_, _) => await SaveFormulaAsync(recalcAll: false);
         var recalcBtn = new Button
         {
             Content = "重算全部球",
             Padding = new Thickness(10, 6, 10, 6),
         };
-        recalcBtn.Click += (_, _) => SaveFormula(recalcAll: true);
+        recalcBtn.Click += async (_, _) => await SaveFormulaAsync(recalcAll: true);
         btnRow.Children.Add(saveBtn);
         btnRow.Children.Add(recalcBtn);
         panel.Children.Add(btnRow);
@@ -267,65 +273,48 @@ public sealed class BallObjectView : UserControl, ICommandBusAware
         };
     }
 
-    private void SaveFormula(bool recalcAll)
+    private Task SaveFormulaAsync(bool recalcAll)
     {
-        var parsed = ReadFormulaFromBoxes();
-        if (parsed == null)
-        {
-            MessageBox.Show("公式参数格式无效", "小球", MessageBoxButton.OK, MessageBoxImage.Warning);
-            return;
-        }
-
-        var d = _world.Defaults;
-        d.SizeBase = parsed.SizeBase;
-        d.SizeScale = parsed.SizeScale;
-        d.WeightBase = parsed.WeightBase;
-        d.WeightScale = parsed.WeightScale;
-        d.InitialMultiplier = parsed.InitialMultiplier;
-        PublicDefaultsStore.Save(_dataRoot, d);
-
-        if (recalcAll)
-        {
-            foreach (var ball in _world.Balls)
-                d.ApplyToBall(ball);
-            _world.NotifyChanged();
-        }
-        else
-        {
-            _world.NotifyChanged(markDirty: false);
-        }
-
-        UpdatePreview();
+        var command = "formula.set"
+                      + $" sizebase={_sizeBaseBox.Text.Trim()}"
+                      + $" sizescale={_sizeScaleBox.Text.Trim()}"
+                      + $" weightbase={_weightBaseBox.Text.Trim()}"
+                      + $" weightscale={_weightScaleBox.Text.Trim()}"
+                      + $" initial={_initialBox.Text.Trim()}"
+                      + $" recalc={recalcAll.ToString().ToLowerInvariant()}";
+        return RunAsync(command);
     }
 
-    private void ApplyBall()
+    private Task ApplyBallAsync()
     {
         if (_world.SelectedBallId == null)
-            return;
-        var ball = _world.FindBall(_world.SelectedBallId);
-        if (ball == null)
-            return;
+            return ShowLocalFailureAsync("请先选中小球");
+        var command = $"ball.set id={_world.SelectedBallId}"
+                      + $" color={_colorBox.Text.Trim()}"
+                      + $" multiplier={_multBox.Text.Trim()}"
+                      + $" size={_sizeBox.Text.Trim()}"
+                      + $" weight={_weightBox.Text.Trim()}";
+        return RunAsync(command);
+    }
 
-        if (!string.IsNullOrWhiteSpace(_colorBox.Text))
-            ball.Color = _colorBox.Text.Trim();
-
-        var hadMult = long.TryParse(_multBox.Text.Trim(), NumberStyles.Integer, CultureInfo.InvariantCulture, out var mult);
-        var hadSize = int.TryParse(_sizeBox.Text.Trim(), NumberStyles.Integer, CultureInfo.InvariantCulture, out var size);
-        var hadWeight = double.TryParse(_weightBox.Text.Trim(), NumberStyles.Float, CultureInfo.InvariantCulture, out var weight);
-
-        if (hadMult)
+    private async Task RunAsync(string command)
+    {
+        if (_bus == null)
         {
-            ball.Multiplier = PublicDefaults.ClampMultiplier(mult);
-            if (!hadSize && !hadWeight)
-                _world.Defaults.ApplyToBall(ball);
+            await ShowLocalFailureAsync("命令总线尚未连接");
+            return;
         }
 
-        if (hadSize)
-            ball.Size = PublicDefaults.RoundSize(size);
-        if (hadWeight)
-            ball.Weight = PublicDefaults.RoundWeight(weight);
+        var result = await _bus.ExecuteAsync(command, "UI");
+        _result.Text = result.Message;
+        _result.Foreground = result.Success ? Brushes.SeaGreen : Brushes.Firebrick;
+    }
 
-        _world.NotifyChanged();
+    private Task ShowLocalFailureAsync(string message)
+    {
+        _result.Text = message;
+        _result.Foreground = Brushes.Firebrick;
+        return Task.CompletedTask;
     }
 
     private static TextBox AddRow(Panel parent, string label, bool readOnly = false)

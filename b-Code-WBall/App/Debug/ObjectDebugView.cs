@@ -22,6 +22,7 @@ public sealed class ObjectDebugView : UserControl, ICommandBusAware
     private readonly SceneWorld _world;
     private CommandBus? _bus;
     private readonly TextBlock _status;
+    private readonly TextBlock _result;
     private readonly TextBox _idBox;
     private readonly TextBox _typeBox;
     private readonly TextBox _xBox;
@@ -51,6 +52,13 @@ public sealed class ObjectDebugView : UserControl, ICommandBusAware
 
         _status = new TextBlock { Text = "请在落球区选中对象或球", Margin = new Thickness(0, 0, 0, 8), TextWrapping = TextWrapping.Wrap };
         root.Children.Add(_status);
+        _result = new TextBlock
+        {
+            Margin = new Thickness(0, 0, 0, 8),
+            TextWrapping = TextWrapping.Wrap,
+            Foreground = Brushes.Gray,
+        };
+        root.Children.Add(_result);
 
         _idBox = AddRow(root, "Id", readOnly: true);
         _typeBox = AddRow(root, "类型", readOnly: true);
@@ -97,10 +105,10 @@ public sealed class ObjectDebugView : UserControl, ICommandBusAware
                 Tag = hex,
                 ToolTip = hex,
             };
-            swatch.MouseLeftButtonDown += (_, _) =>
+            swatch.MouseLeftButtonDown += async (_, _) =>
             {
                 _colorBox.Text = (string)swatch.Tag;
-                ApplyColorImmediate();
+                await ApplyColorImmediateAsync();
             };
             wrap.Children.Add(swatch);
         }
@@ -113,7 +121,7 @@ public sealed class ObjectDebugView : UserControl, ICommandBusAware
             Margin = new Thickness(0, 12, 0, 0),
             Padding = new Thickness(10, 6, 10, 6),
         };
-        _applyBtn.Click += (_, _) => ApplyAll();
+        _applyBtn.Click += async (_, _) => await ApplyAllAsync();
         root.Children.Add(_applyBtn);
 
         Content = new ScrollViewer { Content = root, VerticalScrollBarVisibility = ScrollBarVisibility.Auto };
@@ -250,7 +258,7 @@ public sealed class ObjectDebugView : UserControl, ICommandBusAware
         }
     }
 
-    private void ApplyColorImmediate()
+    private async Task ApplyColorImmediateAsync()
     {
         UpdatePreviewFromBox();
         var type = _typeBox.Text;
@@ -259,61 +267,101 @@ public sealed class ObjectDebugView : UserControl, ICommandBusAware
         if (string.IsNullOrWhiteSpace(id) || string.IsNullOrWhiteSpace(color))
             return;
         if (type == "ball")
-            Run($"ball.set id={id} color={color}");
+            await RunAsync($"ball.set id={id} color={color}");
         else if (type == "solid")
-            Run($"solid.set id={id} color={color}");
+            await RunAsync($"solid.set id={id} color={color}");
     }
 
-    private void ApplyAll()
+    private async Task ApplyAllAsync()
     {
         var type = _typeBox.Text;
         var id = _idBox.Text;
         if (string.IsNullOrWhiteSpace(id))
+        {
+            ShowLocalFailure("请先选中对象或球");
             return;
+        }
 
         if (type == "ball")
         {
-            var parts = new List<string> { $"ball.set id={id} color={_colorBox.Text.Trim()}" };
-            if (_multBox.IsEnabled
-                && long.TryParse(_multBox.Text.Trim(), NumberStyles.Integer, CultureInfo.InvariantCulture, out var m))
-                parts[0] += $" multiplier={m}";
-            Run(parts[0]);
+            var command = $"ball.set id={id} color={_colorBox.Text.Trim()}";
+            if (_multBox.IsEnabled)
+                command += $" multiplier={_multBox.Text.Trim()}";
+            await RunAsync(command);
             return;
         }
 
         if (type == "solid")
         {
-            if (double.TryParse(_xBox.Text, NumberStyles.Float, CultureInfo.InvariantCulture, out var x)
-                && double.TryParse(_yBox.Text, NumberStyles.Float, CultureInfo.InvariantCulture, out var y))
-                Run($"solid.move id={id} x={Fmt(x)} y={Fmt(y)}");
-            Run($"solid.set id={id} color={_colorBox.Text.Trim()}");
+            if (!double.TryParse(_xBox.Text, NumberStyles.Float, CultureInfo.InvariantCulture, out var x)
+                || !double.TryParse(_yBox.Text, NumberStyles.Float, CultureInfo.InvariantCulture, out var y))
+            {
+                ShowLocalFailure("X/Y 必须是有效数字");
+                return;
+            }
+
+            if (!IsHexColor(_colorBox.Text))
+            {
+                ShowLocalFailure("颜色必须是 #RRGGBB");
+                return;
+            }
+
+            if (await RunAsync($"solid.move id={id} x={Fmt(x)} y={Fmt(y)}"))
+                await RunAsync($"solid.set id={id} color={_colorBox.Text.Trim()}");
             return;
         }
 
         // scene object
         var cmd = new List<string> { $"scene.set id={id}" };
-        if (_xBox.IsEnabled && double.TryParse(_xBox.Text, NumberStyles.Float, CultureInfo.InvariantCulture, out var ox))
-            cmd.Add($"x={Fmt(ox)}");
-        if (_yBox.IsEnabled && double.TryParse(_yBox.Text, NumberStyles.Float, CultureInfo.InvariantCulture, out var oy))
-            cmd.Add($"y={Fmt(oy)}");
-        if (_wBox.IsEnabled && double.TryParse(_wBox.Text, NumberStyles.Float, CultureInfo.InvariantCulture, out var ow))
-            cmd.Add($"w={Fmt(ow)}");
-        if (_hBox.IsEnabled && double.TryParse(_hBox.Text, NumberStyles.Float, CultureInfo.InvariantCulture, out var oh))
-            cmd.Add($"h={Fmt(oh)}");
-        if (_rotBox.IsEnabled && double.TryParse(_rotBox.Text, NumberStyles.Float, CultureInfo.InvariantCulture, out var orot))
-            cmd.Add($"rotation={Fmt(orot)}");
+        if (!TryAddNumber(cmd, "x", _xBox)
+            || !TryAddNumber(cmd, "y", _yBox)
+            || !TryAddNumber(cmd, "w", _wBox)
+            || !TryAddNumber(cmd, "h", _hBox)
+            || !TryAddNumber(cmd, "rotation", _rotBox))
+        {
+            ShowLocalFailure("几何字段必须是有效数字");
+            return;
+        }
+
         if (_nameBox.IsEnabled)
-            cmd.Add($"name={_nameBox.Text.Trim()}");
+            cmd.Add($"name={CommandParser.QuoteArg(_nameBox.Text.Trim())}");
         if (cmd.Count > 1)
-            Run(string.Join(" ", cmd));
+            await RunAsync(string.Join(" ", cmd));
     }
 
-    private void Run(string cmd)
+    private async Task<bool> RunAsync(string command)
     {
         if (_bus == null)
-            return;
-        _ = _bus.ExecuteAsync(cmd, "UI");
+        {
+            ShowLocalFailure("命令总线尚未连接");
+            return false;
+        }
+
+        var result = await _bus.ExecuteAsync(command, "UI");
+        _result.Text = result.Message;
+        _result.Foreground = result.Success ? Brushes.SeaGreen : Brushes.Firebrick;
+        return result.Success;
     }
+
+    private static bool TryAddNumber(List<string> command, string name, TextBox box)
+    {
+        if (!box.IsEnabled)
+            return true;
+        if (!double.TryParse(box.Text, NumberStyles.Float, CultureInfo.InvariantCulture, out var value))
+            return false;
+        command.Add($"{name}={Fmt(value)}");
+        return true;
+    }
+
+    private void ShowLocalFailure(string message)
+    {
+        _result.Text = message;
+        _result.Foreground = Brushes.Firebrick;
+    }
+
+    private static bool IsHexColor(string value)
+        => System.Text.RegularExpressions.Regex.IsMatch(
+            value.Trim(), "^#[0-9A-Fa-f]{6}$", System.Text.RegularExpressions.RegexOptions.CultureInvariant);
 
     private static string Fmt(double v) => v.ToString("0.###", CultureInfo.InvariantCulture);
 

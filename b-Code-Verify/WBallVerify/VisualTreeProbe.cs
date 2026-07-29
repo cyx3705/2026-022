@@ -19,4 +19,22 @@ internal static class VisualTreeProbe
         }
         return null;
     }
+
+    public static IReadOnlyList<T> FindVisualChildren<T>(DependencyObject root) where T : DependencyObject
+    {
+        var matches = new List<T>();
+        Collect(root, matches);
+        return matches;
+    }
+
+    private static void Collect<T>(DependencyObject root, List<T> matches) where T : DependencyObject
+    {
+        for (var i = 0; i < VisualTreeHelper.GetChildrenCount(root); i++)
+        {
+            var child = VisualTreeHelper.GetChild(root, i);
+            if (child is T match)
+                matches.Add(match);
+            Collect(child, matches);
+        }
+    }
 }

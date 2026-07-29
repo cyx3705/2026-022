@@ -18,9 +18,7 @@ namespace WBall.Presentation;
 internal sealed class WBallWorkspaceViews
 {
     private readonly DropZoneView _dropZone;
-    private readonly ObjectDebugView _objectDebug;
-    private readonly BallObjectView _ball;
-    private readonly RefereeView _referee;
+    private readonly SceneDebugView _sceneDebug;
     private readonly ArenaSettingsView _arenaSettings;
     private readonly BalanceSettingsView _balanceSettings;
     private readonly RenderSettingsView _renderSettings;
@@ -42,9 +40,10 @@ internal sealed class WBallWorkspaceViews
     {
         _dropZone = new DropZoneView(world, log);
         _dropZone.AutoStepEnabled = false;
-        _objectDebug = new ObjectDebugView(world);
-        _ball = new BallObjectView(world, dataRoot);
-        _referee = new RefereeView(world);
+        var objectDebug = new ObjectDebugView(world);
+        var ball = new BallObjectView(world);
+        var referee = new RefereeView(world);
+        _sceneDebug = new SceneDebugView(world, objectDebug, ball, referee);
 
         Stage = stageState;
         BattleWorld = new SceneWorld
@@ -69,7 +68,7 @@ internal sealed class WBallWorkspaceViews
         _balanceSettings = new BalanceSettingsView(balanceConfig, battleConfig, presets);
         _renderSettings = new RenderSettingsView(renderJobs);
 
-        _commandViews = [_dropZone, _objectDebug, _ball, _referee, _arenaSettings, _balanceSettings, _renderSettings];
+        _commandViews = [_dropZone, _sceneDebug, _arenaSettings, _balanceSettings, _renderSettings];
         ToolWindows = CreateToolWindows();
     }
 
@@ -127,45 +126,23 @@ internal sealed class WBallWorkspaceViews
             DefaultSide = DockSide.Bottom,
             DefaultRatio = 0.28,
         },
-        // v2.8:调试三窗默认隐藏并合为一组标签,按需 win.show 唤出
+        // v3.5:对象、小球与裁判合并为默认可见的场景调试工作台。
         new()
         {
-            Id = "objdebug",
-            Title = "对象调试",
+            Id = "scenedebug",
+            Title = "场景调试",
             DefaultSide = DockSide.Right,
-            DefaultRatio = 0.22,
-            DefaultVisible = false,
-            ContentFactory = () => _objectDebug,
+            DefaultRatio = 0.28,
+            DefaultVisible = true,
+            ContentFactory = () => _sceneDebug,
         },
-        new()
-        {
-            Id = "ballpanel",
-            Title = "小球",
-            DefaultSide = DockSide.Tab,
-            DefaultTabTarget = "objdebug",
-            DefaultRatio = 0.24,
-            DefaultVisible = false,
-            ContentFactory = () => _ball,
-        },
-        new()
-        {
-            Id = "referee",
-            Title = "裁判区",
-            DefaultSide = DockSide.Tab,
-            DefaultTabTarget = "objdebug",
-            DefaultRatio = 0.22,
-            DefaultVisible = false,
-            ContentFactory = () => _referee,
-        },
-        // v3.1 AW-01:「对战区」设置窗 — 默认隐藏,win.show name=arenaset 或「对战台→对战区设置」唤出。
-        // 并入既有调试标签组(objdebug)而非新开右侧窗格:新窗格拿不到稳定比例会塌缩;
-        // 面板 id(battle/editor)由面板系统后置创建,注册期不能作为 tab 目标。
+        // v3.1 AW-01:「对战区」设置窗默认隐藏，并入场景调试标签组。
         new()
         {
             Id = "arenaset",
             Title = "对战区",
             DefaultSide = DockSide.Tab,
-            DefaultTabTarget = "objdebug",
+            DefaultTabTarget = "scenedebug",
             DefaultRatio = 0.26,
             DefaultVisible = false,
             ContentFactory = () => _arenaSettings,

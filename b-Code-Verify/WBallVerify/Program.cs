@@ -20,6 +20,7 @@ using WBall.Verify.Suites;
 // --keep-artifacts 强制保留;--artifact-root <path> 换根。
 // v3.4 V34-09:断言与共享上下文搬进 VerifyRun;suite 正逐个搬进 Suites/(先 timeline 与 page)。
 using var artifacts = VerifyArtifacts.Create(args);
+var verificationTimer = Stopwatch.StartNew();
 var run = new VerifyRun(artifacts.Root, artifacts);
 var failures = run.Failures;
 var dataRoot = run.Root;
@@ -814,8 +815,27 @@ Check("preset.save/load commands", presetSave.Success && presetLoad.Success
 var simCommand = await bus.ExecuteAsync("balance.sim seeds=7 seconds=1 timeoutMs=30000 format=table", "verify");
 Check("balance.sim command", simCommand.Success && simCommand.Message.Contains("seed  seconds"));
 
+await EditorCommandSuite.RunAsync(run);
+
 Console.WriteLine($"v3.3 hash seed=42 @60s: {defaultHashA}");
 Console.WriteLine($"v3.3 hash seed=43 @60s: {defaultHashC}");
+verificationTimer.Stop();
+Console.WriteLine("FULL_SUMMARY " + JsonSerializer.Serialize(new
+{
+    Version = "3.5.0",
+    Suite = "full",
+    ElapsedMilliseconds = verificationTimer.Elapsed.TotalMilliseconds,
+    Passed = run.PassedCount,
+    Failed = failures.Count,
+    Hashes = new
+    {
+        V31 = legacyHash,
+        V32 = v32RollbackHash,
+        V33Seed42 = defaultHashA,
+        V33Seed43 = defaultHashC,
+    },
+    ArtifactRoot = artifacts.Root,
+}));
 Console.WriteLine(failures.Count == 0 ? "VERIFY PASS" : $"VERIFY FAIL ({failures.Count})");
 if (failures.Count > 0)
     Console.WriteLine(string.Join(Environment.NewLine, failures.Select(x => "  " + x)));
