@@ -4,6 +4,7 @@
 
 | 版本 | 日期 | 里程碑 | 说明 |
 |---|---|---|---|
+| 3.0.3 | 2026-07-29 | 最终冻结消费基线 | 从 `2026-023-AppShell/z-Package-AppShell/feed` 精确引用 `OneHistory.AppShell.Shell 3.0.3`；复验中央舞台、默认关闭 MCP、确定性与工程分层门禁 |
 | 3.0.0 | 2026-07-29 | 冻结消费契约 | 从 `2026-023-AppShell/z-Package-AppShell/feed` 固定引用 `OneHistory.AppShell.Shell 3.0.0`；舞台使用 `DockSide.Center`；应用身份同源；WBall 显式关闭 MCP 默认启动 |
 | 0.4.1-M4 | 2026-07-12 | M4 修补 | 修复 x64 回收站删除闪退(SHFILEOPSTRUCT 误用 Pack=1,详见下方 M4 要点);资源窗口新增“打开文件夹…”与“恢复默认工作区”(res.root 的图形入口) |
 | 0.4.0-M4 | 2026-07-12 | M4 | 控制窗口群(JSON 面板)+ 资源窗口 + res.*/panel.* 指令组。验收 5 / 6 达成;R-06 越界拒绝实测。二次开发权限规则见 docs/二次开发演进手册.md |

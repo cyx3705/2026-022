@@ -14,11 +14,11 @@
 
   <ItemGroup>
     <!--
-      AppShell 3.0.0:使用 2026-023-AppShell 的正式冻结包，Core/Services 走传递依赖，
+      AppShell 3.0.3:使用 2026-023-AppShell 的最终冻结包，Core/Services 走传递依赖，
       舞台使用显式 DockSide.Center 契约。
       桌面消费者只需引用 Shell;ServiceHost 是服务宿主消费者才需要的包,这里不引。
     -->
-    <PackageReference Include="OneHistory.AppShell.Shell" Version="[3.0.0]" />
+    <PackageReference Include="OneHistory.AppShell.Shell" Version="[3.0.3]" />
   </ItemGroup>
 
   <ItemGroup>
