@@ -1,6 +1,5 @@
 using System.Globalization;
 using System.Text.Json;
-using System.Windows.Media;
 using WBall.Game;
 using WBall.Battle;
 
@@ -375,17 +374,4 @@ public sealed class SceneWorld
            || string.Equals(key, "weight", StringComparison.OrdinalIgnoreCase)
            || string.Equals(key, "size", StringComparison.OrdinalIgnoreCase);
 
-    public static Color ParseColor(string? hex, Color fallback)
-    {
-        if (string.IsNullOrWhiteSpace(hex))
-            return fallback;
-        try
-        {
-            return (Color)ColorConverter.ConvertFromString(hex)!;
-        }
-        catch
-        {
-            return fallback;
-        }
-    }
 }

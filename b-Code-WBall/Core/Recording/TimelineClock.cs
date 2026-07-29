@@ -11,7 +11,7 @@ public sealed class TimelineClock
 
     public TimelineClock(RenderTimeConfig config, bool autoSlow)
     {
-        _config = RenderTimeConfigStore.Clone(config);
+        _config = config.Clone();
         AutoSlow = autoSlow;
         CurrentScale = _config.ManualSimulationScale;
     }

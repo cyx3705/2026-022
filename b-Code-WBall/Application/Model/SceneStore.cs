@@ -1,98 +1,14 @@
 using System.Globalization;
-using System.IO;
-using System.Text;
-using System.Text.Json;
-using System.Text.Json.Serialization;
 
 namespace WBall.Model;
-
-/// <summary>场景快照 DTO(文件权威进出口;运行时仍以 SceneWorld 为准)。</summary>
-public sealed class SceneSnapshot
-{
-    public int Format { get; set; } = 1;
-    public string App { get; set; } = "WBall";
-    public double GravityG { get; set; } = 10;
-    public bool BallCollision { get; set; } = true;
-    public int Seed { get; set; } = 42;
-    /// <summary>场景内区宽高;format≥2 写入;缺省按 800×600。</summary>
-    public double WorldWidth { get; set; } = SceneWorld.DefaultWorldWidth;
-    public double WorldHeight { get; set; } = SceneWorld.DefaultWorldHeight;
-    public List<SceneObjectDto> Objects { get; set; } = new();
-    /// <summary>已提交线框;format≥3;草图不写入。</summary>
-    public List<WireframeDto> Wireframes { get; set; } = new();
-    /// <summary>异形实体;format≥4;多边形顶点为权威,三角形加载时重算(V51Q5)。</summary>
-    public List<SolidDto> Solids { get; set; } = new();
-    /// <summary>可选初始小球(含位置;加载进内存,不写库)。</summary>
-    public List<BallDto> Balls { get; set; } = new();
-}
-
-public sealed class WireframeDto
-{
-    public string Id { get; set; } = "";
-    public bool Closed { get; set; } = true;
-    public List<WirePointDto> Points { get; set; } = new();
-}
-
-public sealed class WirePointDto
-{
-    public double X { get; set; }
-    public double Y { get; set; }
-}
-
-public sealed class SolidDto
-{
-    public string Id { get; set; } = "";
-    public string Color { get; set; } = MeshSolid.DefaultColor;
-    public List<WirePointDto> Points { get; set; } = new();
-}
-
-public sealed class SceneObjectDto
-{
-    public string Id { get; set; } = "";
-    public string Type { get; set; } = "block";
-    public double X { get; set; }
-    public double Y { get; set; }
-    public double W { get; set; } = 40;
-    public double H { get; set; } = 40;
-    public double DirX { get; set; }
-    public double DirY { get; set; } = 1;
-    public double InfluenceRadius { get; set; } = 160;
-    public double StrengthG { get; set; } = 10;
-    public double Rotation { get; set; }
-    public string? PatchJson { get; set; }
-    /// <summary>对象名;销毁器上为函数名(format≥5)。</summary>
-    public string? Name { get; set; }
-}
-
-public sealed class BallDto
-{
-    public string Id { get; set; } = "";
-    public double X { get; set; }
-    public double Y { get; set; }
-    public string Color { get; set; } = "#3B82F6";
-    public double Weight { get; set; } = 1;
-    public double Size { get; set; } = 12;
-    /// <summary>倍率(format≥5;缺省 1)。</summary>
-    public long Multiplier { get; set; } = 1;
-    public Dictionary<string, string>? Props { get; set; }
-}
 
 /// <summary>
 /// 场景文件 ↔ SceneWorld。
 /// 权威路径(验收 12 / v1.2.1): <b>仅</b> 文件 → SceneWorld；禁止 SQLite hydrate。
 /// </summary>
-public static class SceneStore
+public static partial class SceneStore
 {
     public const int CurrentFormat = 5;
-
-    private static readonly JsonSerializerOptions JsonOptions = new()
-    {
-        WriteIndented = true,
-        PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
-        DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
-        ReadCommentHandling = JsonCommentHandling.Skip,
-        AllowTrailingCommas = true,
-    };
 
     public static SceneSnapshot Capture(SceneWorld world)
     {
@@ -281,67 +197,6 @@ public static class SceneStore
         world.NotifyChanged(markDirty: false);
     }
 
-    public static void Save(SceneWorld world, string fullPath)
-    {
-        var dir = Path.GetDirectoryName(fullPath);
-        if (!string.IsNullOrEmpty(dir))
-            Directory.CreateDirectory(dir);
-
-        var snap = Capture(world);
-        var json = JsonSerializer.Serialize(snap, JsonOptions);
-        // 原子写:先写临时再替换,避免半截文件
-        var tmp = fullPath + ".tmp";
-        File.WriteAllText(tmp, json, Encoding.UTF8);
-        File.Copy(tmp, fullPath, overwrite: true);
-        File.Delete(tmp);
-
-        world.LastScenePath = fullPath;
-        world.SceneDirty = false;
-    }
-
-    public static SceneSnapshot ReadFile(string fullPath)
-    {
-        if (!File.Exists(fullPath))
-            throw new FileNotFoundException("场景文件不存在", fullPath);
-
-        string json;
-        try
-        {
-            json = File.ReadAllText(fullPath, Encoding.UTF8);
-        }
-        catch (Exception ex)
-        {
-            throw new InvalidOperationException($"无法读取场景文件: {ex.Message}", ex);
-        }
-
-        if (string.IsNullOrWhiteSpace(json))
-            throw new InvalidOperationException("场景文件为空");
-
-        SceneSnapshot? snap;
-        try
-        {
-            snap = JsonSerializer.Deserialize<SceneSnapshot>(json, JsonOptions);
-        }
-        catch (JsonException ex)
-        {
-            throw new InvalidOperationException($"场景 JSON 损坏或格式错误: {ex.Message}", ex);
-        }
-
-        if (snap == null)
-            throw new InvalidOperationException("场景文件反序列化为空");
-
-        ValidateSnapshot(snap);
-        return snap;
-    }
-
-    public static void Load(SceneWorld world, string fullPath)
-    {
-        var snap = ReadFile(fullPath);
-        Apply(world, snap);
-        world.LastScenePath = fullPath;
-        world.SceneDirty = false;
-    }
-
     public static void NewScene(SceneWorld world)
     {
         world.IsPlaying = false;
@@ -519,76 +374,6 @@ public static class SceneStore
         }
 
         return true;
-    }
-
-    /// <summary>轻读场景头/计数,供 scenes 管理表刷新(不 hydrate 进 SceneWorld)。</summary>
-    public static bool TryPeekMeta(
-        string path,
-        out double worldWidth,
-        out double worldHeight,
-        out int objectCount,
-        out int ballCount)
-    {
-        worldWidth = SceneWorld.DefaultWorldWidth;
-        worldHeight = SceneWorld.DefaultWorldHeight;
-        objectCount = 0;
-        ballCount = 0;
-        try
-        {
-            var json = File.ReadAllText(path);
-            var snap = JsonSerializer.Deserialize<SceneSnapshot>(json, JsonOptions);
-            if (snap == null)
-                return false;
-            ValidateSnapshot(snap);
-            worldWidth = snap.WorldWidth > 0 ? snap.WorldWidth : SceneWorld.DefaultWorldWidth;
-            worldHeight = snap.WorldHeight > 0 ? snap.WorldHeight : SceneWorld.DefaultWorldHeight;
-            objectCount = snap.Objects?.Count ?? 0;
-            ballCount = snap.Balls?.Count ?? 0;
-            return true;
-        }
-        catch
-        {
-            return false;
-        }
-    }
-
-    private static void ValidateSnapshot(SceneSnapshot snap)
-    {
-        if (snap.Format <= 0)
-            snap.Format = 1; // 容错:缺省视为 format1
-        if (snap.Format > CurrentFormat)
-            throw new InvalidOperationException(
-                $"场景 format={snap.Format} 高于当前支持的 {CurrentFormat},请升级 WBall");
-        snap.Objects ??= new List<SceneObjectDto>();
-        snap.Balls ??= new List<BallDto>();
-        snap.Wireframes ??= new List<WireframeDto>();
-        snap.Solids ??= new List<SolidDto>();
-
-        // format1:宽高缺省
-        if (snap.Format < 2)
-        {
-            if (snap.WorldWidth <= 0)
-                snap.WorldWidth = SceneWorld.DefaultWorldWidth;
-            if (snap.WorldHeight <= 0)
-                snap.WorldHeight = SceneWorld.DefaultWorldHeight;
-        }
-
-        // format<3:无线框
-        if (snap.Format < 3)
-            snap.Wireframes = new List<WireframeDto>();
-
-        // format<4:无异形实体
-        if (snap.Format < 4)
-            snap.Solids = new List<SolidDto>();
-
-        // format<5:无 name / multiplier 缺省
-        if (snap.Format < 5)
-        {
-            foreach (var o in snap.Objects)
-                o.Name = null;
-            foreach (var b in snap.Balls)
-                b.Multiplier = 1;
-        }
     }
 
     private static bool Near(double a, double b) => Math.Abs(a - b) < 1e-6;

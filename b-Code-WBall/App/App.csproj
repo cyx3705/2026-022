@@ -6,18 +6,23 @@
     <UseWPF>true</UseWPF>
     <RootNamespace>AppShell.App</RootNamespace>
     <AssemblyName>WBall</AssemblyName>
+    <!-- AppShell 3.0 以入口程序集元数据作为应用身份单一来源。 -->
+    <Version>3.4.0</Version>
     <!-- N-01:每显示器 DPI 感知(Per-Monitor V2) -->
     <ApplicationManifest>app.manifest</ApplicationManifest>
   </PropertyGroup>
 
   <ItemGroup>
     <!--
-      v3.0:AppShell 改为已发布包引用(Core/Services 走传递依赖)。
-      v3.4 V34-06:升到正式 0.7.2 —— 该版删除了固定主内容/工作页契约与 page.*,
-      舞台改为普通工具窗口注册(见 WBallWorkspaceViews 的 stage 描述符)。
+      AppShell 3.0.0:使用 2026-023-AppShell 的正式冻结包，Core/Services 走传递依赖，
+      舞台使用显式 DockSide.Center 契约。
       桌面消费者只需引用 Shell;ServiceHost 是服务宿主消费者才需要的包,这里不引。
     -->
-    <PackageReference Include="OneHistory.AppShell.Shell" Version="0.7.2" />
+    <PackageReference Include="OneHistory.AppShell.Shell" Version="[3.0.0]" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Application\WBall.Application.csproj" />
   </ItemGroup>
 
 </Project>

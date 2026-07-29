@@ -8,12 +8,13 @@ WBall 是一个基于 .NET 8、WPF 与 OneHistory AppShell 的可配置落球对
 
 ## 当前状态
 
-- 当前应用版本：`3.3.0`
+- 当前应用版本：`3.4.0`
 - 当前代码基线：v3.2.1「离线出片与时间模块」和 v3.3「同阵营积分传递与升格弹回收」已交付
-- v3.4「工程卫生与质量修复」已立项，目标是降低修改放大、恢复可隔离构建和有界验证；不改变 v3.3 战斗结果
+- v3.4「工程卫生与质量修复」已完成：核心逻辑与 WPF/AppShell 分层，构建、格式、确定性、出片和页面门禁均已通过
 - v3.1 回退兼容：关闭三项 v3.2 默认玩法变更后，留档哈希逐字一致
 - 平台：Windows、`.NET 8`、WPF
-- 框架：`OneHistory.AppShell.Shell 0.5.0`
+- 框架：`OneHistory.AppShell.Shell 3.0.0`（冻结契约，权威项目 `2026-023-AppShell`）
+- MCP：WBall 默认显式关闭；模块托管保持开启
 
 v3.2 在 v3.1 的 `arena_layout.json` 规模配置之上新增独立的 `battle_balance.json`，把射速、升格、对消、护罩、余烬、经济映射、物理弹性和回合收敛参数开放为 `balance.*` 命令与「战斗平衡」设置窗。`balance.sim` 可在隔离实例中按多个种子试跑，不写配置、不改变当前战局；预设档只携带 arena + balance，内置 `standard`、`rush`、`marathon`。详细规格与验收数据见 [`b-Office/WBall_v3.2_战斗平衡自定义与无头试跑需求.md`](./b-Office/WBall_v3.2_战斗平衡自定义与无头试跑需求.md)。
 
@@ -39,7 +40,9 @@ v3.2.1 将出片改为冻结输入后的生产者/消费者任务：MTA 模拟�
 
 ```text
 b-Code-WBall/
-  App/                    WBall 主程序
+  Core/                   无 WPF/AppShell 的模型、物理、时间轴与配置契约
+  Application/            场景和属性文件用例
+  App/                    WPF/AppShell 桌面组合根与出片适配
   WBall.sln               Visual Studio 解决方案
 b-Code-Verify/
   WBallVerify/            确定性与整局模拟验证器
@@ -49,17 +52,17 @@ b-Video/                  视频素材
 b-Publish/                发布产物
 ```
 
-主程序的重要模块：
+桌面层的重要模块：
 
 ```text
 App/Battle/               战斗运行时、导演、经济桥、配置与剧本
 App/Commands/             WBall 自定义命令
-App/Model/                场景、球体、线框和实体模型
 App/Presentation/         工作区与设置窗口
-App/Sim/                  物理引擎
 App/Stage/                舞台、对战区和 HUD
-App/Recording/            时间模块、独立出片任务与 Media Foundation 流式编码
+App/Recording/            独立出片任务与 Media Foundation 流式编码
 ```
+
+`WBall.Core` 单独以 `net8.0` 构建；验证器会检查其程序集引用，禁止重新引入 WPF、AppShell 或 Media Foundation。
 
 ## 构建
 
@@ -168,7 +171,9 @@ v3.3 default,  seed=43 @60s: E3CC0CFA0E3B630DBB11372AC3F31F03DB031E144858E75D552
 
 WBall 应用层可以自由扩展，但 AppShell 的指令语法、公共契约和停靠机制属于冻结区。开始修改前请阅读：
 
-- [`b-Office/二次开发演进手册.md`](./b-Office/二次开发演进手册.md)
+- [AppShell 3.0 复用合同](../2026-023-AppShell/z-Package-AppShell/AppShell.reuse.md)
+- [AppShell 3.0 API 与指令手册](../2026-023-AppShell/z-Package-AppShell/docs/AppShell_API与指令手册.md)
+- [AppShell 3.0 消费变更摘要](../2026-023-AppShell/z-Package-AppShell/docs/AppShell_3.0_消费变更摘要.md)
 - [`b-Office/WBall_v3.1_对战区自定义与设置窗需求.md`](./b-Office/WBall_v3.1_对战区自定义与设置窗需求.md)
 - [`b-Office/WBall_v3.2_战斗平衡自定义与无头试跑需求.md`](./b-Office/WBall_v3.2_战斗平衡自定义与无头试跑需求.md)
 - [`b-Office/WBall_v3.2.1_结果导向离线出片与时间模块需求.md`](./b-Office/WBall_v3.2.1_结果导向离线出片与时间模块需求.md)

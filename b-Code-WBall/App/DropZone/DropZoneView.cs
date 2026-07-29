@@ -356,13 +356,13 @@ public sealed class DropZoneView : FrameworkElement, ICommandBusAware
     /// <summary>异形实体填充(v1.5.1 VI-03):常态无描边;选中仅淡色轮廓,无矩形手柄(ED-05)。</summary>
     private void DrawMeshSolids(DrawingContext dc)
     {
-        var fallback = SceneWorld.ParseColor(MeshSolid.DefaultColor, Color.FromRgb(0x64, 0x74, 0x8B));
+        var fallback = UiColor.Parse(MeshSolid.DefaultColor, Color.FromRgb(0x64, 0x74, 0x8B));
         foreach (var solid in _world.Solids)
         {
             if (solid.Points.Count < 3)
                 continue;
             var selected = string.Equals(solid.Id, _world.SelectedSolidId, StringComparison.OrdinalIgnoreCase);
-            var c = SceneWorld.ParseColor(solid.Color, fallback);
+            var c = UiColor.Parse(solid.Color, fallback);
             var fill = new SolidColorBrush(Color.FromRgb(c.R, c.G, c.B));
             fill.Freeze();
 
@@ -473,7 +473,7 @@ public sealed class DropZoneView : FrameworkElement, ICommandBusAware
             {
                 if (ball.Trail.Count < 2)
                     continue;
-                var color = SceneWorld.ParseColor(ball.Color, Colors.DodgerBlue);
+                var color = UiColor.Parse(ball.Color, Colors.DodgerBlue);
                 (double X, double Y)? prev = null;
                 var idx = 0;
                 var last = ball.Trail.Count - 1;
@@ -513,7 +513,7 @@ public sealed class DropZoneView : FrameworkElement, ICommandBusAware
 
         foreach (var ball in _world.Balls)
         {
-            var color = SceneWorld.ParseColor(ball.Color, Colors.DodgerBlue);
+            var color = UiColor.Parse(ball.Color, Colors.DodgerBlue);
             var fill = GetBrush(color);
             dc.DrawEllipse(fill, null, new Point(ball.X, ball.Y), ball.Size, ball.Size);
 

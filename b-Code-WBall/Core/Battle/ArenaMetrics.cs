@@ -80,7 +80,7 @@ public sealed class ArenaMetrics
     public static ArenaMetrics Compute(
         ArenaLayoutConfig arena,
         IReadOnlyList<TurretDefinition> turrets,
-        WeaponCatalog? weapons)
+        IWeaponSpeedCatalog? weapons)
     {
         var cell = ArenaFormulas.CellSize(arena);
         var cols = Math.Max(1, (int)Math.Ceiling(arena.Width / cell));
@@ -125,10 +125,10 @@ public sealed class ArenaMetrics
             ? "直射"
             : arena.InitialShellWeapon.Trim();
         var baseSpeed = 360d; // WeaponDefinition.Speed 默认
-        if (weapons != null && weapons.TryResolve(weaponName, out var weapon))
+        if (weapons != null && weapons.TryGetSpeed(weaponName, out var resolvedName, out var resolvedSpeed))
         {
-            baseSpeed = weapon.Speed;
-            weaponName = weapon.Name;
+            baseSpeed = resolvedSpeed;
+            weaponName = resolvedName;
         }
 
         var value = Math.Max(1, arena.InitialShellValue);

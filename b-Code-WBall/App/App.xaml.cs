@@ -1,4 +1,5 @@
 using System.Windows;
+using AppShell.Core;
 using AppShell.Core.Commands;
 using AppShell.Core.Logging;
 using AppShell.Services;
@@ -19,12 +20,15 @@ public partial class App : Application
 {
     private ShellLog? _log;
     private RenderJobService? _renderJobs;
+    private WorkspaceService? _workspace;
 
     protected override void OnStartup(StartupEventArgs e)
     {
         base.OnStartup(e);
 
-        var paths = new AppPaths("WBall");
+        AppIdentity.Use(typeof(App).Assembly);
+        var identity = AppIdentity.Current;
+        var paths = new AppPaths(identity.Name);
         var log = new ShellLog(paths);
         var settings = new SettingsService(paths);
         _log = log;
@@ -41,11 +45,11 @@ public partial class App : Application
 
         var workspaceRoot = settings.Get("workspace.root") ?? paths.WorkspaceDir;
         var workspace = new WorkspaceService(workspaceRoot);
+        _workspace = workspace;
         var scenesDir = System.IO.Path.Combine(workspace.Root, "scenes");
         System.IO.Directory.CreateDirectory(scenesDir);
 
         MigrateLegacyPanels(paths, log);
-        MigrateStageWindowLayout(paths, log);
         SeedBattlePanel(paths, log);
         SeedEditorPanel(paths, log);
 
@@ -87,14 +91,13 @@ public partial class App : Application
 
         var config = new ShellConfig
         {
-            AppName = "WBall",
-            AppVersion = "3.3.0",
+            AppName = identity.Name,
+            AppVersion = identity.Version,
+            Identity = identity,
             Workspace = workspace,
-            // v3.4:取消数据库 —— 不再提供 DataService,于是 db.* 不注册、表窗口不存在。
-            // MCP 网关依赖 DataService(没有它框架会自动降级并告警),这里显式关掉,免得每次启动刷警告。
-            // 注意:模块托管(EnableModules)与数据库无关,保持框架默认(开),行为与 v3.3 一致。
+            // WBall 默认不开放远程命令入口；仅在宿主配置明确授权时开启 MCP。
             EnableMcp = false,
-            // v3.4 V34-06:0.7.2 起没有 MainContent —— 舞台改为 id=stage 的工具窗口(见 ToolWindows)
+            EnableModules = true,
             OnResourceOpen = path => TryOpenSceneFile(path, world, log, sceneProperties, scenesDir),
         };
 
@@ -243,35 +246,9 @@ public partial class App : Application
     protected override void OnExit(ExitEventArgs e)
     {
         _renderJobs?.Dispose();
+        _workspace?.Dispose();
         _log?.Dispose();
         base.OnExit(e);
-    }
-
-    /// <summary>v2.8:一次性迁移 — 移除旧面板并重置停靠布局套用新默认。</summary>
-    /// <summary>
-    /// v3.4 V34-06:一次性布局迁移。0.5.0 时代舞台是 ShellConfig.MainContent(布局里是文档节点),
-    /// 0.7.2 起它是 id=stage 的工具窗口。旧布局没有 stage 节点,直接恢复会让新窗口落进退化尺寸
-    /// (实测只拿到 3% 高度);因此升级首启时丢弃旧停靠布局,套用新默认(舞台占中央列 74%)。
-    /// 只删布局文件,面板/场景/配置/剧本等用户数据一律不动 —— 与 v2.8 的迁移做法一致。
-    /// </summary>
-    private static void MigrateStageWindowLayout(AppPaths paths, ShellLog log)
-    {
-        try
-        {
-            var layout = System.IO.Path.Combine(paths.LayoutDir, "current.layout.xml");
-            if (!System.IO.File.Exists(layout))
-                return;
-            var xml = System.IO.File.ReadAllText(layout);
-            if (xml.Contains("ContentId=\"stage\"", StringComparison.Ordinal))
-                return;
-
-            System.IO.File.Delete(layout);
-            log.Info("app", "v3.4 舞台改为工具窗口:已重置停靠布局并套用新默认(仅布局,用户数据未动)");
-        }
-        catch (Exception ex)
-        {
-            log.Warn("app", $"舞台窗口布局迁移失败(将沿用现有布局): {ex.Message}");
-        }
     }
 
     private static void MigrateLegacyPanels(AppPaths paths, ShellLog log)
@@ -281,25 +258,13 @@ public partial class App : Application
             var panelsDir = System.IO.Path.Combine(paths.Root, "panels");
             System.IO.Directory.CreateDirectory(panelsDir);
             string[] legacy = ["dropzone.json", "scene.json", "wireframe.json", "formula.json", "motor.json"];
-            var removedAny = false;
             foreach (var name in legacy)
             {
                 var file = System.IO.Path.Combine(panelsDir, name);
                 if (!System.IO.File.Exists(file))
                     continue;
                 System.IO.File.Delete(file);
-                removedAny = true;
                 log.Info("app", $"v2.8 已移除旧面板 panels/{name}");
-            }
-
-            if (removedAny)
-            {
-                var layout = System.IO.Path.Combine(paths.LayoutDir, "current.layout.xml");
-                if (System.IO.File.Exists(layout))
-                {
-                    System.IO.File.Delete(layout);
-                    log.Info("app", "v2.8 窗口整合:已重置停靠布局,采用新默认(对战台+编辑工具)");
-                }
             }
         }
         catch (Exception ex)

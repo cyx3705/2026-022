@@ -14,24 +14,23 @@ namespace WBall.Verify;
 /// - <c>--keep-artifacts</c> 强制保留,<c>--artifact-root &lt;path&gt;</c> 换根(长测/人工复盘);
 /// - 清理异常只打 warning,不改变测试结论;
 /// - 删除前二次校验目录名前缀,**只碰自己造的目录**,绝不递归系统临时目录的其它内容;
-/// - 未捕获异常导致进程崩溃时 finally 不保证执行 —— 那种情况下产物天然被保留,正是我们想要的。
+/// - 成功状态默认是 false,只有验证入口正常返回 0 时才显式标记;未捕获异常因此一定保留现场。
 /// </summary>
 internal sealed class VerifyArtifacts : IDisposable
 {
     /// <summary>目录名前缀:既是可读标识,也是删除时的安全闸门。</summary>
     public const string Prefix = "wball_verify_v34_";
 
-    private readonly Func<bool> _succeeded;
     private readonly bool _keep;
     private readonly bool _ownsRoot;
     private bool _disposed;
+    private bool _succeeded;
 
-    private VerifyArtifacts(string root, bool keep, bool ownsRoot, Func<bool> succeeded)
+    private VerifyArtifacts(string root, bool keep, bool ownsRoot)
     {
         Root = root;
         _keep = keep;
         _ownsRoot = ownsRoot;
-        _succeeded = succeeded;
         Directory.CreateDirectory(Root);
     }
 
@@ -39,15 +38,21 @@ internal sealed class VerifyArtifacts : IDisposable
     public string Root { get; }
 
     /// <param name="args">命令行参数,识别 --keep-artifacts / --artifact-root。</param>
-    /// <param name="succeeded">收尾时求值的成功判据(通常是 failures.Count == 0)。</param>
-    public static VerifyArtifacts Create(string[] args, Func<bool> succeeded)
+    public static VerifyArtifacts Create(string[] args)
     {
         var keep = args.Contains("--keep-artifacts", StringComparer.OrdinalIgnoreCase);
         var baseDir = ReadOption(args, "--artifact-root") ?? Path.GetTempPath();
         // 进程号不足以定位"哪一次跑的":加时间戳,长测翻目录时按时间排序即可
         var name = $"{Prefix}{DateTime.Now:yyyyMMdd-HHmmss}_{Environment.ProcessId}";
         var root = Path.Combine(baseDir, name);
-        return new VerifyArtifacts(root, keep, ownsRoot: true, succeeded);
+        return new VerifyArtifacts(root, keep, ownsRoot: true);
+    }
+
+    /// <summary>记录验证入口的正常退出码并原样返回,供顶层 return 使用。</summary>
+    public int Complete(int exitCode)
+    {
+        _succeeded = exitCode == 0;
+        return exitCode;
     }
 
     /// <summary>每个 suite 一个子目录,互不干扰,失败时也便于定位是哪个 suite 留下的。</summary>
@@ -73,7 +78,7 @@ internal sealed class VerifyArtifacts : IDisposable
             return;
         }
 
-        if (!_succeeded())
+        if (!_succeeded)
         {
             Console.WriteLine($"ARTIFACTS kept for diagnosis: {Root}");
             return;

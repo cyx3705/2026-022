@@ -19,14 +19,13 @@ using WBall.Verify.Suites;
 // v3.4 V34-02:产物根由 using(try/finally)托管 —— 通过即清理,失败保留并打印路径。
 // --keep-artifacts 强制保留;--artifact-root <path> 换根。
 // v3.4 V34-09:断言与共享上下文搬进 VerifyRun;suite 正逐个搬进 Suites/(先 timeline 与 page)。
-VerifyRun? run = null;
-using var artifacts = VerifyArtifacts.Create(args, () => run?.Passed != false);
-run = new VerifyRun(artifacts.Root, artifacts);
+using var artifacts = VerifyArtifacts.Create(args);
+var run = new VerifyRun(artifacts.Root, artifacts);
 var failures = run.Failures;
 var dataRoot = run.Root;
 var log = run.Log;
 
-void Check(string name, bool passed, string? detail = null) => run!.Check(name, passed, detail);
+void Check(string name, bool passed, string? detail = null) => run.Check(name, passed, detail);
 
 string RunHash(BalanceConfig balance, int seed, int frames, out Harness harness)
 {
@@ -36,10 +35,11 @@ string RunHash(BalanceConfig balance, int seed, int frames, out Harness harness)
     return harness.Director.DeterministicHash();
 }
 
-WBall.Verify.Suites.TimelineSuite.Run(run);
+ArchitectureSuite.Run(run);
+TimelineSuite.Run(run);
 
 if (args.Contains("--render-page-smoke", StringComparer.OrdinalIgnoreCase))
-    return WBall.Verify.Suites.PageSuite.Run(run);
+    return artifacts.Complete(WBall.Verify.Suites.PageSuite.Run(run));
 
 if (args.Contains("--render-smoke", StringComparer.OrdinalIgnoreCase))
 {
@@ -228,14 +228,16 @@ if (args.Contains("--render-smoke", StringComparer.OrdinalIgnoreCase))
     while (renderJobs.Status.Active && DateTime.UtcNow < deadline)
         Thread.Sleep(25);
     Check("record.stop cancels and a clean render task can restart",
-        aliasStop.Success && renderJobs.Status.Stage == "canceled");
+        aliasStop.Success && renderJobs.Status.Stage == "canceled",
+        $"stop={aliasStop.Success} stage={renderJobs.Status.Stage}");
     var restart = await recordBus.ExecuteAsync(
         "render.start mode=output seconds=1 seed=48 name=after-record-stop",
         "verify");
     deadline = DateTime.UtcNow.AddSeconds(30);
     while (renderJobs.Status.Active && DateTime.UtcNow < deadline)
         Thread.Sleep(50);
-    Check("render restart after record.stop completes", restart.Success && renderJobs.Status.Stage == "completed");
+    Check("render restart after record.stop completes", restart.Success && renderJobs.Status.Stage == "completed",
+        $"start={restart.Success} stage={renderJobs.Status.Stage} message={restart.Message}");
 
     var liveConfigAfter = JsonSerializer.Serialize(new
     {
@@ -247,7 +249,7 @@ if (args.Contains("--render-smoke", StringComparer.OrdinalIgnoreCase))
         liveConfigSnapshot == liveConfigAfter && liveHash == renderHarness.Director.DeterministicHash());
 
     Console.WriteLine(failures.Count == 0 ? "RENDER SMOKE PASS" : $"RENDER SMOKE FAIL ({failures.Count})");
-    return failures.Count == 0 ? 0 : 1;
+    return artifacts.Complete(failures.Count == 0 ? 0 : 1);
 }
 
 if (args.Contains("--render-long-acceptance", StringComparer.OrdinalIgnoreCase))
@@ -368,7 +370,7 @@ if (args.Contains("--render-long-acceptance", StringComparer.OrdinalIgnoreCase))
         + $"reclaimed={ledger.GetProperty("friendlyPromotedSmallReclaimed").GetInt64()} "
         + $"scaleSegments={longRoot.GetProperty("scaleSegments").GetArrayLength()}");
     Console.WriteLine(failures.Count == 0 ? "RENDER LONG ACCEPTANCE PASS" : "RENDER LONG ACCEPTANCE FAIL");
-    return failures.Count == 0 ? 0 : 1;
+    return artifacts.Complete(failures.Count == 0 ? 0 : 1);
 }
 
 static string RenderFingerprint(string manifestPath)
@@ -381,7 +383,7 @@ static string RenderFingerprint(string manifestPath)
 }
 
 if (args.Contains("--assist-performance", StringComparer.OrdinalIgnoreCase))
-    return WBall.Verify.Suites.AssistSuite.RunPerformance(run);
+    return artifacts.Complete(WBall.Verify.Suites.AssistSuite.RunPerformance(run));
 
 if (args.Contains("--calibrate", StringComparer.OrdinalIgnoreCase))
 {
@@ -422,7 +424,7 @@ if (args.Contains("--calibrate", StringComparer.OrdinalIgnoreCase))
         Console.WriteLine($"=== {item.Name} ===");
         Console.WriteLine(item.Result.Format());
     }
-    return calibrationResults.All(x => !x.Result.Interrupted) ? 0 : 1;
+    return artifacts.Complete(calibrationResults.All(x => !x.Result.Interrupted) ? 0 : 1);
 }
 
 // M1/M2 红线：关闭三项默认变化后必须回到 v3.1 哈希。
@@ -817,7 +819,7 @@ Console.WriteLine($"v3.3 hash seed=43 @60s: {defaultHashC}");
 Console.WriteLine(failures.Count == 0 ? "VERIFY PASS" : $"VERIFY FAIL ({failures.Count})");
 if (failures.Count > 0)
     Console.WriteLine(string.Join(Environment.NewLine, failures.Select(x => "  " + x)));
-return failures.Count == 0 ? 0 : 1;
+return artifacts.Complete(failures.Count == 0 ? 0 : 1);
 
 static bool BigBallKillsShieldedTurret(string dataRoot, IShellLog log)
 {

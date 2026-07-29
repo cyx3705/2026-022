@@ -1,8 +1,8 @@
 # v3.4 V34-08:质量门禁。clean checkout 必须能恢复、构建、格式合规、回归全绿。
 #
 # 前提(自建 Runner):AppShell 本地 feed 需可达 —— 默认按 nuget.config 的相对路径
-# ..\2026-020-OneHistoryStudio\z-Package-AppShell\feed 解析,因此 Runner 上 020 与 022
-# 必须同级 checkout;若布局不同,设仓库变量 APPSHELL_FEED 并把 nuget.config 的
+# ..\2026-023-AppShell\z-Package-AppShell\feed 解析,因此 Runner 上 023 与 022
+# 必须同级 checkout;若布局不同,设 Runner 环境变量 APPSHELL_FEED 并把 nuget.config 的
 # appshell-local 值改成 %APPSHELL_FEED%(见该文件注释)。
 name: wball-ci
 
@@ -14,12 +14,20 @@ on:
       - "b-Code-Verify/**"
       - "Directory.Build.props"
       - ".editorconfig"
+      - ".gitattributes"
+      - ".gitignore"
       - "nuget.config"
       - ".github/workflows/ci.yml"
   pull_request:
     paths:
       - "b-Code-WBall/**"
       - "b-Code-Verify/**"
+      - "Directory.Build.props"
+      - ".editorconfig"
+      - ".gitattributes"
+      - ".gitignore"
+      - "nuget.config"
+      - ".github/workflows/ci.yml"
   workflow_dispatch:
 
 env:

@@ -104,14 +104,12 @@ internal sealed class WBallWorkspaceViews
 
     private IReadOnlyList<ToolWindowDescriptor> CreateToolWindows() =>
     [
-        // v3.4 V34-06:AppShell 0.7.2 删除了 ShellConfig.MainContent(中央区只剩无标签空背景),
-        // 对战舞台改为普通工具窗口。DockSide.Top 的窗格由 DockingHost 插进**中央列**,
-        // 因此舞台仍占据窗口中部;控制台位于中央列下方。
+        // AppShell 3.0.0 以 DockSide.Center 明确冻结中央标签区契约。
         new()
         {
             Id = "stage",
             Title = "对战舞台",
-            DefaultSide = DockSide.Top,
+            DefaultSide = DockSide.Center,
             DefaultRatio = 0.74,
             ContentFactory = () => _stageView,
         },

@@ -33,7 +33,7 @@ public sealed class WeaponDefinition
     public string Color { get; set; } = "#FFFFFF";
 }
 
-public sealed class WeaponCatalog
+public sealed class WeaponCatalog : IWeaponSpeedCatalog
 {
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
@@ -81,6 +81,20 @@ public sealed class WeaponCatalog
             return false;
         }
         return _byName.TryGetValue(name.Trim(), out weapon!);
+    }
+
+    public bool TryGetSpeed(string name, out string resolvedName, out double speed)
+    {
+        if (TryResolve(name, out var weapon))
+        {
+            resolvedName = weapon.Name;
+            speed = weapon.Speed;
+            return true;
+        }
+
+        resolvedName = name;
+        speed = 0;
+        return false;
     }
 
     public void Reload()

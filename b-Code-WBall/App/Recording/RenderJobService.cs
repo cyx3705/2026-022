@@ -204,7 +204,7 @@ public sealed class RenderJobService : IDisposable
             PngDirectory: System.IO.Path.Combine(directory, "frames")));
         var effectiveRequest = request with { Name = safeName, MaxOutputSeconds = maxSeconds };
         var cancellation = _cancellation;
-        _simulationThread = new Thread(() => RunPipeline(snapshot, effectiveRequest, directory, cancellation))
+        _simulationThread = new Thread(() => RunPipeline(jobId, snapshot, effectiveRequest, directory, cancellation))
         {
             IsBackground = true,
             Name = $"WBall Simulation {jobId}",
@@ -262,6 +262,7 @@ public sealed class RenderJobService : IDisposable
     }
 
     private void RunPipeline(
+        string jobId,
         RenderInputSnapshot input,
         RenderJobRequest request,
         string directory,
@@ -281,7 +282,7 @@ public sealed class RenderJobService : IDisposable
         {
             try
             {
-                ConsumeFrames(input, request, directory, channel.Reader, producerResult.Task, cancellationSource);
+                ConsumeFrames(jobId, input, request, directory, channel.Reader, producerResult.Task, cancellationSource);
                 rendererDone.TrySetResult();
             }
             catch (Exception ex)
@@ -292,14 +293,14 @@ public sealed class RenderJobService : IDisposable
         })
         {
             IsBackground = true,
-            Name = $"WBall Renderer {Status.JobId}",
+            Name = $"WBall Renderer {jobId}",
         };
         renderThread.SetApartmentState(ApartmentState.STA);
         renderThread.Start();
 
         try
         {
-            SetStatus(Status with { Stage = _paused ? "paused" : "simulating" });
+            UpdateStatus(jobId, status => status with { Stage = _paused ? "paused" : "simulating" });
             var economy = new SceneWorld { Defaults = input.Defaults };
             SceneStore.Apply(economy, input.Scene);
             var battleConfig = BattleConfigStore.CreateMemory(input.Turrets, input.Arena, _log);
@@ -376,9 +377,13 @@ public sealed class RenderJobService : IDisposable
             try { rendererDone.Task.GetAwaiter().GetResult(); }
             catch (Exception ex)
             {
-                if (Status.Active)
+                if (Status.JobId == jobId && Status.Active)
                 {
-                    SetStatus(Status with { Stage = "failed", Error = ex.GetBaseException().Message });
+                    UpdateStatus(jobId, status => status with
+                    {
+                        Stage = "failed",
+                        Error = ex.GetBaseException().Message,
+                    });
                     _log.Error("render", $"出片流水线失败: {ex}");
                 }
             }
@@ -386,6 +391,7 @@ public sealed class RenderJobService : IDisposable
     }
 
     private void ConsumeFrames(
+        string jobId,
         RenderInputSnapshot input,
         RenderJobRequest request,
         string directory,
@@ -399,7 +405,7 @@ public sealed class RenderJobService : IDisposable
         var pngDirectory = System.IO.Path.Combine(directory, "frames");
         var partialMp4 = System.IO.Path.Combine(directory, "output.partial.mp4");
         var finalMp4 = System.IO.Path.Combine(directory, "output.mp4");
-        var manifest = CreateManifest(input, request, directory);
+        var manifest = CreateManifest(jobId, input, request, directory);
         MediaFoundationEncoder.FrameWriter? writer = null;
 
         try
@@ -415,7 +421,11 @@ public sealed class RenderJobService : IDisposable
             manifest.Status = "running";
             manifest.StartedAt = DateTimeOffset.Now;
             WriteManifest(manifestPath, manifest);
-            SetStatus(Status with { Stage = _paused ? "paused" : "rendering", ManifestPath = manifestPath });
+            UpdateStatus(jobId, status => status with
+            {
+                Stage = _paused ? "paused" : "rendering",
+                ManifestPath = manifestPath,
+            });
 
             while (reader.WaitToReadAsync(cancellation).AsTask().GetAwaiter().GetResult())
             {
@@ -446,7 +456,7 @@ public sealed class RenderJobService : IDisposable
                     var generatedFps = manifest.Frames / Math.Max(0.001, watch.Elapsed.TotalSeconds);
                     var remaining = Math.Max(0, Status.TotalFrames - manifest.Frames);
                     var eta = generatedFps > 0 ? remaining / generatedFps : 0;
-                    SetStatus(Status with
+                    UpdateStatus(jobId, status => status with
                     {
                         Stage = _paused ? "paused" : "rendering",
                         Frame = manifest.Frames,
@@ -467,7 +477,7 @@ public sealed class RenderJobService : IDisposable
                 }
             }
 
-            SetStatus(Status with { Stage = "finalizing" });
+            UpdateStatus(jobId, status => status with { Stage = "finalizing" });
             var result = producerResult.GetAwaiter().GetResult();
             if (writer != null)
             {
@@ -495,7 +505,7 @@ public sealed class RenderJobService : IDisposable
             manifest.ValueLedger = result.ValueLedger;
             manifest.FinalAssist = result.FinalAssist;
             WriteManifest(manifestPath, manifest);
-            SetStatus(Status with
+            UpdateStatus(jobId, status => status with
             {
                 Stage = "completed",
                 WallElapsed = manifest.WallElapsed,
@@ -514,7 +524,12 @@ public sealed class RenderJobService : IDisposable
             manifest.FinishedAt = DateTimeOffset.Now;
             manifest.WallElapsed = watch.Elapsed.TotalSeconds;
             WriteManifest(manifestPath, manifest);
-            SetStatus(Status with { Stage = "canceled", WallElapsed = manifest.WallElapsed, ManifestPath = manifestPath });
+            UpdateStatus(jobId, status => status with
+            {
+                Stage = "canceled",
+                WallElapsed = manifest.WallElapsed,
+                ManifestPath = manifestPath,
+            });
         }
         catch (Exception ex)
         {
@@ -523,7 +538,7 @@ public sealed class RenderJobService : IDisposable
             manifest.FinishedAt = DateTimeOffset.Now;
             manifest.WallElapsed = watch.Elapsed.TotalSeconds;
             WriteManifest(manifestPath, manifest);
-            SetStatus(Status with
+            UpdateStatus(jobId, status => status with
             {
                 Stage = "failed",
                 WallElapsed = manifest.WallElapsed,
@@ -539,19 +554,23 @@ public sealed class RenderJobService : IDisposable
         }
     }
 
-    private RenderJobManifest CreateManifest(RenderInputSnapshot input, RenderJobRequest request, string directory) => new()
-    {
-        JobId = Status.JobId,
-        CreatedAt = DateTimeOffset.Now,
-        Request = request,
-        Config = input.Time,
-        SceneHash = HashObject(input.Scene),
-        ArenaHash = HashObject(new { input.Turrets, input.Arena }),
-        BalanceHash = HashObject(input.Balance),
-        WeaponsHash = HashObject(input.Weapons),
-        StageHash = HashObject(input.Stage),
-        PngDirectory = System.IO.Path.Combine(directory, "frames"),
-    };
+    private RenderJobManifest CreateManifest(
+        string jobId,
+        RenderInputSnapshot input,
+        RenderJobRequest request,
+        string directory) => new()
+        {
+            JobId = jobId,
+            CreatedAt = DateTimeOffset.Now,
+            Request = request,
+            Config = input.Time,
+            SceneHash = HashObject(input.Scene),
+            ArenaHash = HashObject(new { input.Turrets, input.Arena }),
+            BalanceHash = HashObject(input.Balance),
+            WeaponsHash = HashObject(input.Weapons),
+            StageHash = HashObject(input.Stage),
+            PngDirectory = System.IO.Path.Combine(directory, "frames"),
+        };
 
     private RenderInputSnapshot CaptureInput(string? scenarioName)
     {
@@ -686,6 +705,22 @@ public sealed class RenderJobService : IDisposable
         lock (_sync)
             _status = status;
         StatusChanged?.Invoke();
+    }
+
+    private bool UpdateStatus(string jobId, Func<RenderJobStatus, RenderJobStatus> update)
+    {
+        lock (_sync)
+        {
+            if (!string.Equals(_status.JobId, jobId, StringComparison.Ordinal))
+                return false;
+            var next = update(_status);
+            if (!_status.Active && next.Active)
+                return false;
+            _status = next;
+        }
+
+        StatusChanged?.Invoke();
+        return true;
     }
 
     private static void SavePng(byte[] pixels, int width, int height, string path)

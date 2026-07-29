@@ -5,6 +5,7 @@ using System.Windows.Media.Imaging;
 using WBall.Battle;
 using WBall.Game;
 using WBall.Model;
+using WBall.Presentation;
 
 namespace WBall.Stage;
 
@@ -94,7 +95,7 @@ public sealed class ArenaView : FrameworkElement
             {
                 var turret = _battle.Turrets.FirstOrDefault(t =>
                     t.Id.Equals(ids[i], StringComparison.OrdinalIgnoreCase));
-                var color = SceneWorld.ParseColor(turret?.Color ?? "#334155", Colors.SlateGray);
+                var color = UiColor.Parse(turret?.Color ?? "#334155", Colors.SlateGray);
                 palette[i] = (255 << 24)
                     | ((int)(color.R * 0.30) << 16)
                     | ((int)(color.G * 0.30) << 8)
@@ -123,7 +124,7 @@ public sealed class ArenaView : FrameworkElement
         {
             var brush = GetBrush(ball.Color);
             var radius = Math.Clamp(ball.Size, 2, 60);
-            var color = SceneWorld.ParseColor(ball.Color, Colors.White);
+            var color = UiColor.Parse(ball.Color, Colors.White);
 
             // 速度反方向渐隐拖尾(纯渲染,无历史缓存)
             var speedSq = ball.Vx * ball.Vx + ball.Vy * ball.Vy;
@@ -210,7 +211,7 @@ public sealed class ArenaView : FrameworkElement
     {
         foreach (var transfer in _battle.AssistVisuals)
         {
-            var color = SceneWorld.ParseColor(transfer.Color, Colors.White);
+            var color = UiColor.Parse(transfer.Color, Colors.White);
             var alpha = (byte)Math.Clamp(120 * transfer.RemainingSeconds / 0.65, 18, 120);
             var pen = new Pen(FrozenBrush(Color.FromArgb(alpha, color.R, color.G, color.B)), 1.4)
             {
@@ -238,7 +239,7 @@ public sealed class ArenaView : FrameworkElement
             if (!turret.Alive)
                 continue;
 
-            var color = SceneWorld.ParseColor(turret.Color, Colors.SlateGray);
+            var color = UiColor.Parse(turret.Color, Colors.SlateGray);
             var center = new Point(turret.TurretX, turret.TurretY);
             var r = turret.TurretRadius;
 
@@ -449,7 +450,7 @@ public sealed class ArenaView : FrameworkElement
     {
         if (BrushCache.TryGetValue(color, out var brush))
             return brush;
-        brush = FrozenBrush(SceneWorld.ParseColor(color, Colors.White));
+        brush = FrozenBrush(UiColor.Parse(color, Colors.White));
         BrushCache[color] = brush;
         return brush;
     }
