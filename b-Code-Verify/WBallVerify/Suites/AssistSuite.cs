@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Text.Json;
 using WBall.Battle;
 using WBall.Model;
 
@@ -74,6 +75,48 @@ internal static class AssistSuite
     public static int ProjectileValue(Harness harness) => harness.BattleWorld.Balls
         .Where(x => x.Projectile != null)
         .Sum(x => x.Projectile!.CapturesLeft);
+
+    public static void VerifyV351Fixes(VerifyRun run)
+    {
+        var intermittent = NewHarness(run, new BalanceConfig());
+        var receiver = AddBall(intermittent, "v351-receiver", ProjectileRole.Shell, 10);
+        var small = AddBall(intermittent, "v351-small", ProjectileRole.SmallShot, 1);
+        intermittent.Battle.Step(1.0 / 60);
+        intermittent.BattleWorld.Balls.Remove(small);
+        Advance(intermittent, 4.1);
+        small.X = receiver.X;
+        small.Y = receiver.Y;
+        intermittent.BattleWorld.Balls.Add(small);
+        intermittent.Battle.Step(1.0 / 60);
+        run.Check("v3.5.1 intermittent friendly contact absorbs small shot",
+            !intermittent.BattleWorld.Balls.Contains(small)
+            && receiver.Projectile!.CapturesLeft == 11,
+            $"smallAlive={intermittent.BattleWorld.Balls.Contains(small)} receiver={receiver.Projectile!.CapturesLeft}");
+
+        var shield = NewHarness(run, new BalanceConfig());
+        var target = shield.Battle.Turrets[1];
+        target.Shield = target.MaxShield;
+        var capacity = (int)(target.Shield / shield.BattleConfig.Arena.ShieldCostPerValue);
+        var shell = AddBall(shield, "v351-shield-shell", ProjectileRole.Shell, capacity + 1);
+        var shieldRadius = target.TurretRadius * shield.Battle.ShieldRingScale;
+        shell.X = target.TurretX - shieldRadius - shell.Size + 0.5;
+        shell.Y = target.TurretY;
+        shell.Vx = 30;
+        shell.Vy = 0;
+        shield.Battle.Step(1.0 / 60);
+        run.Check("v3.5.1 shell bounces after breaking shield",
+            target.Alive
+            && target.Shield == 0
+            && shield.BattleWorld.Balls.Contains(shell)
+            && shell.Projectile!.CapturesLeft == 1
+            && shell.Vx < 0,
+            $"alive={target.Alive} shield={target.Shield:0.###} shellAlive={shield.BattleWorld.Balls.Contains(shell)} "
+            + $"value={shell.Projectile!.CapturesLeft} vx={shell.Vx:0.###}");
+
+        var serialized = JsonSerializer.Serialize(new BalanceConfig { ShieldBreakthrough = true });
+        run.Check("v3.5.1 breakthrough compatibility flag is not persisted",
+            !serialized.Contains("ShieldBreakthrough", StringComparison.OrdinalIgnoreCase));
+    }
 
     private static double MeasureSteps(VerifyRun run, bool enabled, int ballCount, int measuredSteps)
     {

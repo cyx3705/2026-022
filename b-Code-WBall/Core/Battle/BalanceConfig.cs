@@ -1,3 +1,5 @@
+using System.Text.Json.Serialization;
+
 namespace WBall.Battle;
 
 /// <summary>v3.2 战斗平衡参数。规模与初始量仍归 ArenaLayoutConfig。</summary>
@@ -30,7 +32,8 @@ public sealed class BalanceConfig
     public double FriendlyShellTransferRate { get; set; } = 0.10;
     public double FriendlyAssistReachFactor { get; set; } = 1.20;
     public int FriendlyAssistMaxValue { get; set; } = 100_000;
-    public bool ShieldBreakthrough { get; set; } = true;
+    [JsonIgnore]
+    public bool ShieldBreakthrough { get; set; }
     public bool ContactKillEnabled { get; set; } = true;
     public bool SelfShieldRefundEnabled { get; set; } = true;
     public bool SuddenDeathShieldBlock { get; set; } = true;

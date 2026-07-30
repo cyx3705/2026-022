@@ -7,7 +7,7 @@
     <RootNamespace>AppShell.App</RootNamespace>
     <AssemblyName>WBall</AssemblyName>
     <!-- AppShell 3.0 以入口程序集元数据作为应用身份单一来源。 -->
-    <Version>3.5.0</Version>
+    <Version>3.5.1</Version>
     <!-- N-01:每显示器 DPI 感知(Per-Monitor V2) -->
     <ApplicationManifest>app.manifest</ApplicationManifest>
   </PropertyGroup>

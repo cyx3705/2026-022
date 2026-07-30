@@ -8,10 +8,11 @@ WBall 是一个基于 .NET 8、WPF 与 OneHistory AppShell 的可配置落球对
 
 ## 当前状态
 
-- 当前应用版本：`3.5.0`
+- 当前应用版本：`3.5.1`
 - 当前代码基线：v3.2.1「离线出片与时间模块」和 v3.3「同阵营积分传递与升格弹回收」已交付
 - v3.4「工程卫生与质量修复」已完成：核心逻辑与 WPF/AppShell 分层，构建、格式、确定性、出片和页面门禁均已通过
 - v3.5「开发敏捷化与场景调试」已完成：新增 Core/Application 快速验证，编辑写入统一走 CommandBus，并以默认右侧的「场景调试」窗口整合对象、小球与公式、裁判功能
+- v3.5.1 修复友军大小球短暂接触时吸收预算不累计的问题；大球破盾后始终反弹，旧 `breakthrough` 配置入口已退役
 - v3.1 回退兼容：关闭三项 v3.2 默认玩法变更后，留档哈希逐字一致
 - 平台：Windows、`.NET 8`、WPF
 - 框架：`OneHistory.AppShell.Shell 3.0.3`（最终冻结契约，权威项目 `2026-023-AppShell`）
@@ -176,6 +177,8 @@ v3.1 rollback, seed=42 @60s: 6381A3898C0FAD65B57D43C140917A010713AA3015F601BACE1
 v3.2 rollback, seed=42 @60s: E24FD280C34B54F79DAFCAE466DE299B4B76F56B69D83EF63757B96F81BF9184
 v3.3 default,  seed=42 @60s: 5A458728F1A2A4296B126E1EC2F50221EC3D212393125EDFAD62EFED12F8525B
 v3.3 default,  seed=43 @60s: E3CC0CFA0E3B630DBB11372AC3F31F03DB031E144858E75D552FC1CC1C3656CA
+v3.5.1 default, seed=42 @60s: 8E88A3C73371C02D1FDACCD14590693111DF7049B2FA25C5F54D85FCA9C3D012
+v3.5.1 default, seed=43 @60s: EF25BCDD0D2E7A3FA42AE08D1038001290011856E6644F00558F6EF124447F4F
 ```
 
 ## 开发约束
@@ -191,6 +194,7 @@ WBall 应用层可以自由扩展，但 AppShell 的指令语法、公共契约�
 - [`b-Office/WBall_v3.3_同阵营积分传递与升格弹回收需求.md`](./b-Office/WBall_v3.3_同阵营积分传递与升格弹回收需求.md)
 - [`b-Office/WBall_v3.4_工程卫生与质量修复需求.md`](./b-Office/WBall_v3.4_工程卫生与质量修复需求.md)
 - [`b-Office/WBall_v3.5_开发敏捷化与场景调试需求.md`](./b-Office/WBall_v3.5_开发敏捷化与场景调试需求.md)
+- [`b-Office/WBall_v3.5.1_友军吸收与破盾反弹修复.md`](./b-Office/WBall_v3.5.1_友军吸收与破盾反弹修复.md)
 
 ## 许可证
 

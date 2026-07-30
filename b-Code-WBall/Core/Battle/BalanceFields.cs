@@ -206,7 +206,8 @@ public static class BalanceFields
         I("FriendlyAssistMaxValue", "max", "同阵营助力与回收", "单球积分上限", 2, 1_000_000, "balance.assist"),
 
         // ── 护罩与触杀(balance.shield)──────────────────────────
-        B("ShieldBreakthrough", "breakthrough", "护罩与触杀", "破盾直入", "balance.shield"),
+        // 仅供旧哈希回退测试；不序列化、不暴露到命令或 UI。
+        B("ShieldBreakthrough", "", "兼容", "旧版破盾直入", ""),
         B("ContactKillEnabled", "contact", "护罩与触杀", "炮台触杀", "balance.shield"),
         B("SelfShieldRefundEnabled", "refund", "护罩与触杀", "自家小球回充", "balance.shield"),
         B("SuddenDeathShieldBlock", "suddenBlock", "护罩与触杀", "决胜期封锁护盾", "balance.shield"),

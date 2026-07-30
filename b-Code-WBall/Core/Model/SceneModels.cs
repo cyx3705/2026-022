@@ -200,7 +200,7 @@ public sealed class ProjectileState
     /// <summary>由小球池打包产生；用于累计回收审计，不参与身份判断。</summary>
     public bool IsPromotedSmall { get; set; }
 
-    /// <summary>友军小球/大球积分传递的小数预算；无目标时不积累整点。</summary>
+    /// <summary>友军小球/大球积分传递预算；大球按时间预充，最多保留 1 点等待短暂接触。</summary>
     public double FriendlySmallCarry { get; set; }
     public double FriendlyShellCarry { get; set; }
 }

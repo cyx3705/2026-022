@@ -965,11 +965,13 @@ public sealed class BattleRuntime
     private void ResolveBallDuels(double dt)
     {
         var balls = _battleWorld.Balls;
+        var config = _balance.Current;
+        if (config.FriendlyAssistEnabled)
+            AccrueFriendlyAssistBudgets(balls, dt, config);
         if (balls.Count < 2)
             return;
 
         // 步长随光晕与当前最大弹体推导，调大光晕后仍只需查相邻桶且不会漏检。
-        var config = _balance.Current;
         var maxRadius = Math.Max(
             ArenaFormulas.SmallBallSize(_config.Arena, _cellSize),
             _cellSize * _config.Arena.ShellSizeMaxCells);
@@ -1164,8 +1166,7 @@ public sealed class BattleRuntime
             if (dead?.Contains(receiver) == true || target.CapturesLeft <= 0)
                 continue;
             var small = group.Key.Small;
-            var rate = small ? config.FriendlyAbsorbSmallRate : config.FriendlyShellTransferRate;
-            var carry = (small ? target.FriendlySmallCarry : target.FriendlyShellCarry) + rate * dt;
+            var carry = small ? target.FriendlySmallCarry : target.FriendlyShellCarry;
             var budget = (int)Math.Floor(carry + 1e-12);
             var transferred = 0;
             double visualFromX = receiver.X;
@@ -1207,8 +1208,7 @@ public sealed class BattleRuntime
                 }
             }
 
-            carry = Math.Max(0, carry - transferred);
-            carry -= Math.Floor(carry);
+            carry = Math.Clamp(carry - transferred, 0, 1);
             if (small)
             {
                 target.FriendlySmallCarry = carry;
@@ -1245,6 +1245,26 @@ public sealed class BattleRuntime
         }
         return dead;
     }
+
+    private static void AccrueFriendlyAssistBudgets(
+        IEnumerable<Ball> balls,
+        double dt,
+        BalanceConfig config)
+    {
+        foreach (var ball in balls)
+        {
+            var projectile = ball.Projectile;
+            if (projectile == null || projectile.CapturesLeft <= 0 || RoleOf(projectile) != ProjectileRole.Shell)
+                continue;
+            projectile.FriendlySmallCarry = AccrueBudget(
+                projectile.FriendlySmallCarry, config.FriendlyAbsorbSmallRate, dt);
+            projectile.FriendlyShellCarry = AccrueBudget(
+                projectile.FriendlyShellCarry, config.FriendlyShellTransferRate, dt);
+        }
+    }
+
+    private static double AccrueBudget(double current, double rate, double dt) =>
+        rate <= 0 ? 0 : Math.Min(1, Math.Max(0, current) + rate * dt);
 
     private void ResolveEnemyDuel(
         Ball ball,
@@ -1415,11 +1435,11 @@ public sealed class BattleRuntime
             }
             SyncShellSize(ball);
 
-            // v2.12.5 BS-01:破盾直入 — 护盾被本弹打穿则不反弹,余值继续压向本体触杀
+            // 只供旧版本确定性回退；持久化配置和 UI 均不能重新开启。
             if (turret.Shield <= 0 && _balance.Current.ShieldBreakthrough)
                 return false;
 
-            // 护盾仍在:沿法线反弹并推出护罩
+            // v3.5.1:即使本次命中刚好破盾，大球也必须反弹，避免同一发直入炮台触杀。
             var dist = Math.Sqrt(Math.Max(1e-6, distSq));
             var nx = (ball.X - turret.TurretX) / dist;
             var ny = (ball.Y - turret.TurretY) / dist;

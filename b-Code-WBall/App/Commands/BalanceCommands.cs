@@ -137,7 +137,7 @@ public static class BalanceCommands
         {
             Name = "balance.shield",
             Summary = "查询或设置护罩、触杀、回充和自然再生",
-            Example = "balance.shield breakthrough=true contact=true refund=true suddenBlock=true slotGain=1 regen=0",
+            Example = "balance.shield contact=true refund=true suddenBlock=true slotGain=1 regen=0",
             Parameters = SpecsFor("balance.shield"),
             Handler = CommandDescriptor.Sync(ctx =>
             {
@@ -145,8 +145,8 @@ public static class BalanceCommands
                 var changed = ApplyFields(ctx, "balance.shield", c);
                 if (changed) store.Save();
                 return CommandResult.Ok(
-                    $"breakthrough={B(c.ShieldBreakthrough)} contact={B(c.ContactKillEnabled)} "
-                    + $"refund={B(c.SelfShieldRefundEnabled)} suddenBlock={B(c.SuddenDeathShieldBlock)} "
+                    $"contact={B(c.ContactKillEnabled)} refund={B(c.SelfShieldRefundEnabled)} "
+                    + $"suddenBlock={B(c.SuddenDeathShieldBlock)} "
                     + $"slotGain={N(c.ShieldSlotGainPerValue)} regen={N(c.ShieldRegenPerSecond)}");
             }),
         });
@@ -461,7 +461,7 @@ public static class BalanceCommands
             ("升格梯度", ["SmallPackThreshold","SmallPackRatio","SmallPackMax","SmallPackSpeedFollowsSmall"], "即时/territory"),
             ("对消研磨", ["HaloReachFactor","GrindRatePerSecond"], "即时/territory"),
             ("同阵营助力", ["FriendlyAssistEnabled","FriendlyAssistVisualEnabled","FriendlyAbsorbSmallRate","FriendlyShellTransferRate","FriendlyAssistReachFactor","FriendlyAssistMaxValue"], "即时/territory"),
-            ("护罩触杀", ["ShieldBreakthrough","ContactKillEnabled","SelfShieldRefundEnabled","SuddenDeathShieldBlock","ShieldSlotGainPerValue","ShieldRegenPerSecond"], "即时/两者"),
+            ("护罩触杀", ["ContactKillEnabled","SelfShieldRefundEnabled","SuddenDeathShieldBlock","ShieldSlotGainPerValue","ShieldRegenPerSecond"], "即时/两者"),
             ("余烬爆发", ["EmberSpeedMin","EmberSpeedMax","EmberFromAmmo","EmberDrainEconomy"], "即时/territory"),
             ("经济映射", ["IntensityExponent","SizeGainBase","BurstDamageGain","BurstSpreadGain","PierceDamageGain","GravitySizeGain","GravityDamageGain","ScoreDamageGain"], territory ? "当前 territory:仅部分生效" : "当前 direct:生效"),
             ("战场物理", ["WallRestitution","BallRestitution"], "即时/仅右世界"),

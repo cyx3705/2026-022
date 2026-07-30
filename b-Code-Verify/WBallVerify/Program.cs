@@ -435,12 +435,13 @@ var legacy = new BalanceConfig
     AmmoQueueGuard = 512,
     ShieldRegenPerSecond = 1,
     FriendlyAssistEnabled = false,
+    ShieldBreakthrough = true,
 };
 var legacyHash = RunHash(legacy, 42, 3600, out var legacyRun);
 const string V31Hash = "6381A3898C0FAD65B57D43C140917A010713AA3015F601BACE14C7E5B88333F3";
 Check("v3.1 rollback hash", legacyHash == V31Hash, legacyHash);
 
-var v32Rollback = new BalanceConfig { FriendlyAssistEnabled = false };
+var v32Rollback = new BalanceConfig { FriendlyAssistEnabled = false, ShieldBreakthrough = true };
 var v32RollbackHash = RunHash(v32Rollback, 42, 3600, out _);
 const string V32Hash = "E24FD280C34B54F79DAFCAE466DE299B4B76F56B69D83EF63757B96F81BF9184";
 Check("v3.2 rollback hash", v32RollbackHash == V32Hash, v32RollbackHash);
@@ -448,9 +449,13 @@ Check("v3.2 rollback hash", v32RollbackHash == V32Hash, v32RollbackHash);
 var defaultHashA = RunHash(new BalanceConfig(), 42, 3600, out var defaultRunA);
 var defaultHashB = RunHash(new BalanceConfig(), 42, 3600, out _);
 var defaultHashC = RunHash(new BalanceConfig(), 43, 3600, out _);
-Check("v3.3 same-seed deterministic", defaultHashA == defaultHashB, defaultHashA);
-Check("v3.3 different seed differs", defaultHashA != defaultHashC, defaultHashC);
-Check("v3.3 default intentionally changed", defaultHashA != V32Hash);
+const string V351Seed42Hash = "8E88A3C73371C02D1FDACCD14590693111DF7049B2FA25C5F54D85FCA9C3D012";
+const string V351Seed43Hash = "EF25BCDD0D2E7A3FA42AE08D1038001290011856E6644F00558F6EF124447F4F";
+Check("v3.5.1 same-seed deterministic", defaultHashA == defaultHashB, defaultHashA);
+Check("v3.5.1 seed 42 hash", defaultHashA == V351Seed42Hash, defaultHashA);
+Check("v3.5.1 seed 43 hash", defaultHashC == V351Seed43Hash, defaultHashC);
+Check("v3.5.1 different seed differs", defaultHashA != defaultHashC, defaultHashC);
+Check("v3.5.1 default intentionally changed", defaultHashA != V32Hash);
 Check("territory changed", defaultRunA.Battle.TerritoryChecksum() != defaultRunA.InitialTerritoryChecksum);
 
 // BP-07：等比升格档形。
@@ -698,7 +703,7 @@ withRegen.Battle.Step(0.1);
 Check("shield regen opt-in", regenTarget.Shield > 100, $"shield={regenTarget.Shield:0.###}");
 
 // 破盾直入与触杀必须是硬断言，而不是只打印结果。
-Check("big ball kills full-shield turret", BigBallKillsShieldedTurret(dataRoot, log));
+AssistSuite.VerifyV351Fixes(run);
 
 // 硬性时限应保证定时收敛。
 var limited = new Harness(dataRoot, log, new BalanceConfig { HardTimeLimitSeconds = 1 });
@@ -794,6 +799,9 @@ var assistResult = await bus.ExecuteAsync("balance.assist smallRate=0.3 shellRat
 Check("balance.assist command", assistResult.Success
     && simHarness.BalanceStore.Current.FriendlyAbsorbSmallRate == 0.3
     && assistResult.Message.Contains("在场 small="));
+var retiredBreakthrough = await bus.ExecuteAsync("balance.shield breakthrough=true", "verify");
+Check("balance.shield rejects retired breakthrough option", !retiredBreakthrough.Success
+    && !simHarness.BalanceStore.Current.ShieldBreakthrough);
 
 var emberBefore = BalanceConfigStore.Clone(simHarness.BalanceStore.Current);
 var invalidEmber = await bus.ExecuteAsync("balance.ember speedMin=500 speedMax=100", "verify");
@@ -817,12 +825,12 @@ Check("balance.sim command", simCommand.Success && simCommand.Message.Contains("
 
 await EditorCommandSuite.RunAsync(run);
 
-Console.WriteLine($"v3.3 hash seed=42 @60s: {defaultHashA}");
-Console.WriteLine($"v3.3 hash seed=43 @60s: {defaultHashC}");
+Console.WriteLine($"v3.5.1 hash seed=42 @60s: {defaultHashA}");
+Console.WriteLine($"v3.5.1 hash seed=43 @60s: {defaultHashC}");
 verificationTimer.Stop();
 Console.WriteLine("FULL_SUMMARY " + JsonSerializer.Serialize(new
 {
-    Version = "3.5.0",
+    Version = "3.5.1",
     Suite = "full",
     ElapsedMilliseconds = verificationTimer.Elapsed.TotalMilliseconds,
     Passed = run.PassedCount,
@@ -831,8 +839,8 @@ Console.WriteLine("FULL_SUMMARY " + JsonSerializer.Serialize(new
     {
         V31 = legacyHash,
         V32 = v32RollbackHash,
-        V33Seed42 = defaultHashA,
-        V33Seed43 = defaultHashC,
+        V351Seed42 = defaultHashA,
+        V351Seed43 = defaultHashC,
     },
     ArtifactRoot = artifacts.Root,
 }));
@@ -840,36 +848,3 @@ Console.WriteLine(failures.Count == 0 ? "VERIFY PASS" : $"VERIFY FAIL ({failures
 if (failures.Count > 0)
     Console.WriteLine(string.Join(Environment.NewLine, failures.Select(x => "  " + x)));
 return artifacts.Complete(failures.Count == 0 ? 0 : 1);
-
-static bool BigBallKillsShieldedTurret(string dataRoot, IShellLog log)
-{
-    var harness = new Harness(dataRoot, log, new BalanceConfig());
-    var attacker = harness.Battle.Turrets[0];
-    var target = harness.Battle.Turrets[1];
-    target.Shield = target.MaxShield;
-    var dx = target.TurretX - attacker.TurretX;
-    var dy = target.TurretY - attacker.TurretY;
-    var len = Math.Sqrt(dx * dx + dy * dy);
-    harness.BattleWorld.Balls.Add(new Ball
-    {
-        Id = harness.BattleWorld.NextBallId(),
-        X = attacker.TurretX + dx / len * 60,
-        Y = attacker.TurretY + dy / len * 60,
-        Vx = dx / len * 400,
-        Vy = dy / len * 400,
-        Color = attacker.Color,
-        Size = 40,
-        Weight = 8000,
-        Projectile = new ProjectileState
-        {
-            OwnerFactionId = attacker.Id,
-            WeaponName = "大球",
-            Damage = 8000,
-            CapturesLeft = 8000,
-            Role = ProjectileRole.Shell,
-        },
-    });
-    for (var i = 0; i < 600 && target.Alive; i++)
-        harness.Battle.Step(1.0 / 60);
-    return !target.Alive;
-}

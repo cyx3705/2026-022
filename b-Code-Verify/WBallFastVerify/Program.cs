@@ -88,7 +88,7 @@ finally
 
 var summary = new
 {
-    Version = "3.5.0",
+    Version = "3.5.1",
     Suite = "fast",
     ElapsedMilliseconds = Math.Round(watch.Elapsed.TotalMilliseconds, 3),
     Passed = passed,
