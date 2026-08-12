@@ -93,7 +93,7 @@ public static class PlinkoDemoSeeder
             App = "WBall",
             // v2.9 EC-01:落球减速
             GravityG = 4,
-            BallCollision = true,
+            BallCollision = false,
             Seed = 42,
             WorldWidth = w,
             WorldHeight = h,

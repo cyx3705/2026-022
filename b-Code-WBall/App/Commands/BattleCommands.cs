@@ -186,7 +186,7 @@ public static class BattleCommands
             [
                 new ParameterSpec { Name = "id", Description = "炮台 id", Required = true },
                 new ParameterSpec { Name = "hp", Description = "最大生命并回满", Type = ParamType.Double },
-                new ParameterSpec { Name = "shield", Description = "最大护盾并回满", Type = ParamType.Double },
+                new ParameterSpec { Name = "shield", Description = "当前护盾(无上限)", Type = ParamType.Double },
                 new ParameterSpec { Name = "size", Description = "投射球半径", Type = ParamType.Double },
                 new ParameterSpec { Name = "count", Description = "单轮弹数", Type = ParamType.Int },
                 new ParameterSpec { Name = "interval", Description = "开火间隔秒", Type = ParamType.Double },
@@ -317,7 +317,7 @@ public static class BattleCommands
 
     private static string FormatTurret(WBall.Game.Faction turret) =>
         $"{turret.Id} name={turret.Name} alive={turret.Alive.ToString().ToLowerInvariant()} q={turret.Quadrant} " +
-        $"hp={Number(turret.Hp)}/{Number(turret.MaxHp)} shield={Number(turret.Shield)}/{Number(turret.MaxShield)} " +
+        $"hp={Number(turret.Hp)}/{Number(turret.MaxHp)} shield={Number(turret.Shield)}/unlimited " +
         $"points={turret.Points} score={turret.Score} size={Number(turret.Firepower.ProjectileSize)} " +
         $"count={turret.Firepower.ProjectileCount} interval={Number(turret.Firepower.FireIntervalSec)} " +
         $"rpm={Number(turret.BarrelRpm)} barrel={Number(turret.BarrelAngleDeg)}°";

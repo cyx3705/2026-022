@@ -448,7 +448,7 @@ public static class ArenaConfigCommands
                     config.Save();
                 }
                 return CommandResult.Ok(
-                    $"战场弹-弹碰撞 {(config.Arena.BallCollision ? "on" : "off")}");
+                    $"战场弹-弹碰撞 {(config.Arena.BallCollision ? "on（吸收关闭）" : "off（吸收启用）")}");
             }),
         });
     }
@@ -464,12 +464,12 @@ public static class ArenaConfigCommands
         {
             Name = "turret.setall",
             Summary = "批量设置全部炮台的持久化数值(写入 turrets.json;缺省项不动)",
-            Example = "turret.setall initshield=500000 shield=5000000 hp=20000000 rpm=6",
+            Example = "turret.setall initshield=500000 hp=20000000 rpm=6",
             RequiresUiThread = true,
             Parameters =
             [
                 new ParameterSpec { Name = "hp", Description = "生命上限(仅 direct 模式生效)", Type = ParamType.Double },
-                new ParameterSpec { Name = "shield", Description = "护盾上限", Type = ParamType.Double },
+                new ParameterSpec { Name = "shield", Description = "初始护盾兼容别名(无上限)", Type = ParamType.Double },
                 new ParameterSpec { Name = "initshield", Description = "初始护盾", Type = ParamType.Double },
                 new ParameterSpec { Name = "size", Description = "投射球半径 2~60", Type = ParamType.Double },
                 new ParameterSpec { Name = "count", Description = "单轮弹数 1~200", Type = ParamType.Int },
@@ -493,7 +493,8 @@ public static class ArenaConfigCommands
                     }
                     if (ctx.Has("shield"))
                     {
-                        turret.MaxShield = Math.Max(0, ctx.GetDouble("shield"));
+                        turret.InitialShield = Math.Max(0, ctx.GetDouble("shield"));
+                        turret.MaxShield = Math.Max(turret.MaxShield, turret.InitialShield);
                         touched = true;
                     }
                     if (ctx.Has("initshield"))
@@ -531,8 +532,7 @@ public static class ArenaConfigCommands
                         turret.InitialMultiplier = Math.Max(1, ctx.GetInt("mult"));
                         touched = true;
                     }
-                    // 初始护盾不得高于上限
-                    turret.InitialShield = Math.Clamp(turret.InitialShield, 0, turret.MaxShield);
+                    turret.MaxShield = Math.Max(turret.MaxShield, turret.InitialShield);
                 }
 
                 if (!touched)
@@ -621,7 +621,7 @@ public static class ArenaConfigCommands
 
     private static string FormatDefinitions(BattleConfigStore config) =>
         string.Join(Environment.NewLine, config.Turrets.Select(x =>
-            $"  {x.Id} {x.Name} q={x.Quadrant} hp={Num(x.MaxHp)} shield={Num(x.InitialShield)}/{Num(x.MaxShield)} "
+            $"  {x.Id} {x.Name} q={x.Quadrant} hp={Num(x.MaxHp)} shield={Num(x.InitialShield)}/unlimited "
             + $"size={Num(x.ProjectileSize)} count={x.ProjectileCount} interval={Num(x.FireIntervalSec)} rpm={Num(x.BarrelRpm)}"));
 
     private static string FormatFullConfig(

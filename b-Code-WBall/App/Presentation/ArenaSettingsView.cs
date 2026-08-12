@@ -96,7 +96,7 @@ internal sealed class ArenaSettingsView : UserControl, ICommandBusAware
 
         // ③ 护盾与血量
         root.Children.Add(Section("③ 护盾与血量", "统一四座 · 需重置"));
-        root.Children.Add(Pair("初始护盾 / 护盾上限", "initshield", "maxshield"));
+        root.Children.Add(Row("初始护盾", Field("initshield", "0", 142), Hint("无上限")));
         root.Children.Add(Pair("生命上限 / 护盾计价", "maxhp", "cost", "生命仅 direct;计价即时"));
         root.Children.Add(Hint("差异化设置(不公平局)请走 turret.set id=<炮台> …,本窗只做统一设置"));
 
@@ -127,14 +127,14 @@ internal sealed class ArenaSettingsView : UserControl, ICommandBusAware
         // ⑥ 同阵营助力
         root.Children.Add(Section("⑥ 同阵营助力与回收", "即时 · 低速机制"));
         root.Children.Add(Row("开关", _friendlyAssist, _assistVisual));
-        root.Children.Add(Pair("吸收小球 / 大球助力", "assistSmall", "assistShell", "点/秒;建议每次调整 0.05"));
+        root.Children.Add(Pair("小球吸收兼容值 / 大球助力", "assistSmall", "assistShell", "小球即时等值吸收;大球为点/秒"));
         root.Children.Add(Pair("助力范围 / 单球上限", "assistReach", "assistMax"));
         root.Children.Add(_assistMetrics);
 
         // ⑦ 全局
         root.Children.Add(Section("⑦ 全局", ""));
         root.Children.Add(Pair("重力 g / 最大弹数", "gravity", "maxProj"));
-        root.Children.Add(Row("碰撞", _ballCollision));
+        root.Children.Add(Row("碰撞（开启后关闭吸收）", _ballCollision));
 
         // 预览
         root.Children.Add(Section("派生值预览", "随控件即时重算,未应用"));
@@ -196,7 +196,6 @@ internal sealed class ArenaSettingsView : UserControl, ICommandBusAware
         Write("cell", arena.CellSize);
         Write("sudden", arena.SuddenDeathAtSeconds);
         Write("initshield", _config.Turrets.Count == 0 ? 0 : _config.Turrets.Min(x => x.InitialShield));
-        Write("maxshield", _config.Turrets.Count == 0 ? 0 : _config.Turrets.Min(x => x.MaxShield));
         Write("maxhp", _config.Turrets.Count == 0 ? 0 : _config.Turrets.Min(x => x.MaxHp));
         Write("cost", arena.ShieldCostPerValue);
         Write("sizeFactor", arena.ShellSizeCellFactor);
@@ -307,7 +306,6 @@ internal sealed class ArenaSettingsView : UserControl, ICommandBusAware
     private List<TurretDefinition> PreviewTurrets()
     {
         var initialShield = Read("initshield", 0);
-        var maxShield = Read("maxshield", 0);
         var maxHp = Read("maxhp", 1);
         return _config.Turrets.Select(x => new TurretDefinition
         {
@@ -318,8 +316,8 @@ internal sealed class ArenaSettingsView : UserControl, ICommandBusAware
             InitialBalls = x.InitialBalls,
             InitialMultiplier = x.InitialMultiplier,
             MaxHp = maxHp,
-            MaxShield = maxShield,
-            InitialShield = Math.Min(initialShield, maxShield),
+            MaxShield = Math.Max(x.MaxShield, initialShield),
+            InitialShield = Math.Max(0, initialShield),
             ProjectileSize = x.ProjectileSize,
             ProjectileCount = x.ProjectileCount,
             FireIntervalSec = x.FireIntervalSec,
@@ -357,15 +355,13 @@ internal sealed class ArenaSettingsView : UserControl, ICommandBusAware
             commands.Add($"arena.shield cost={Read("cost", arena.ShieldCostPerValue)}");
 
         var initShield = _config.Turrets.Count == 0 ? 0 : _config.Turrets.Min(x => x.InitialShield);
-        var maxShield = _config.Turrets.Count == 0 ? 0 : _config.Turrets.Min(x => x.MaxShield);
         var maxHp = _config.Turrets.Count == 0 ? 0 : _config.Turrets.Min(x => x.MaxHp);
         var shieldsDiffer = _config.Turrets.Select(x => x.InitialShield).Distinct().Count() > 1
-                            || _config.Turrets.Select(x => x.MaxShield).Distinct().Count() > 1
                             || _config.Turrets.Select(x => x.MaxHp).Distinct().Count() > 1;
-        if (shieldsDiffer || Changed("initshield", initShield) || Changed("maxshield", maxShield) || Changed("maxhp", maxHp))
+        if (shieldsDiffer || Changed("initshield", initShield) || Changed("maxhp", maxHp))
         {
             commands.Add($"turret.setall initshield={Read("initshield", initShield)} "
-                         + $"shield={Read("maxshield", maxShield)} hp={Read("maxhp", maxHp)}");
+                         + $"hp={Read("maxhp", maxHp)}");
         }
 
         var shell = new List<string>();

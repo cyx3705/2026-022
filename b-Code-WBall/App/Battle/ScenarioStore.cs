@@ -220,6 +220,7 @@ public sealed class ScenarioStore
         Height = x.Height,
         GravityG = x.GravityG,
         BallCollision = x.BallCollision,
+        BallInteractionRulesVersion = x.BallInteractionRulesVersion,
         Targeting = x.Targeting,
         TurretRadius = x.TurretRadius,
         MaxProjectiles = x.MaxProjectiles,

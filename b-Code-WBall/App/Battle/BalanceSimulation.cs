@@ -137,13 +137,13 @@ public sealed class BalanceSimulator
         var scenePath = _sourceEconomyWorld.LastScenePath;
         if (!string.IsNullOrWhiteSpace(scenePath) && File.Exists(scenePath))
             SceneStore.Load(economy, scenePath);
-        var bridge = new EconomyBridge(_weapons, runLog, balanceStore);
+        var bridge = new EconomyBridge(_weapons, runLog, balanceStore, battleConfig);
         economy.Settlements = bridge;
         var battleWorld = new SceneWorld
         {
             Defaults = economy.Defaults,
             GravityG = 0,
-            BallCollisionEnabled = true,
+            BallCollisionEnabled = arena.BallCollision,
             WallRestitution = balance.WallRestitution,
             BallRestitution = balance.BallRestitution,
         };

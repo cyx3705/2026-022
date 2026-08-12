@@ -6,7 +6,7 @@ public sealed class SceneSnapshot
     public int Format { get; set; } = 1;
     public string App { get; set; } = "WBall";
     public double GravityG { get; set; } = 10;
-    public bool BallCollision { get; set; } = true;
+    public bool BallCollision { get; set; }
     public int Seed { get; set; } = 42;
     public double WorldWidth { get; set; } = SceneWorld.DefaultWorldWidth;
     public double WorldHeight { get; set; } = SceneWorld.DefaultWorldHeight;

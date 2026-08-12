@@ -13,10 +13,8 @@ public sealed class RenderSettingsView : UserControl, ICommandBusAware
 {
     private readonly RenderJobService _service;
     private readonly Dictionary<string, TextBox> _fields = new(StringComparer.Ordinal);
-    private readonly ComboBox _mode = new() { MinWidth = 110 };
     private readonly ComboBox _scenario = new() { MinWidth = 160 };
-    private readonly CheckBox _mp4 = new() { Content = "MP4" };
-    private readonly CheckBox _png = new() { Content = "保留 PNG" };
+    private readonly ComboBox _resolution = new() { MinWidth = 130 };
     private readonly CheckBox _renderAuto = new() { Content = "出片自动降速" };
     private readonly CheckBox _previewAuto = new() { Content = "预览自动降速" };
     private readonly TextBlock _status = new()
@@ -36,10 +34,10 @@ public sealed class RenderSettingsView : UserControl, ICommandBusAware
     {
         _service = service;
         Background = new SolidColorBrush(Color.FromRgb(0xF7, 0xF9, 0xFC));
-        _mode.Items.Add("output");
-        _mode.Items.Add("simulation");
-        _mode.Items.Add("winner");
-        _mode.SelectedIndex = 0;
+        foreach (var preset in new[] { "1280x720", "1920x1080", "2560x1440", "3840x2160", "自定义" })
+            _resolution.Items.Add(preset);
+        _resolution.SelectedIndex = 0;
+        _resolution.SelectionChanged += (_, _) => ApplyResolutionPreset();
         _scenario.Items.Add("当前配置");
         foreach (var scenario in _service.Scenarios)
             _scenario.Items.Add(scenario);
@@ -54,21 +52,27 @@ public sealed class RenderSettingsView : UserControl, ICommandBusAware
         root.Children.Add(Title("出片与时间"));
         root.Children.Add(Section("任务"));
         root.Children.Add(Row("输入来源", _scenario));
-        root.Children.Add(Row("模式 / 种子", _mode, Field("seed", "42", 76)));
-        root.Children.Add(Row("名称 / 时长(s)", Field("name", "battle", 110), Field("seconds", "60", 76)));
+        root.Children.Add(Row("种子", Field("seed", "42", 76)));
+        root.Children.Add(Row("名称", Field("name", "battle", 160)));
+        root.Children.Add(Row("结束条件", new TextBlock
+        {
+            Text = "其他阵营的炮台与全部可战积分被消灭",
+            TextWrapping = TextWrapping.Wrap,
+            VerticalAlignment = VerticalAlignment.Center,
+        }));
 
         root.Children.Add(Section("画面"));
+        root.Children.Add(Row("分辨率预设", _resolution));
         root.Children.Add(Row("宽 / 高", Field("w", "1280", 76), Field("h", "720", 76)));
         root.Children.Add(Row("FPS", Field("fps", "30", 76)));
         root.Children.Add(Row("帧队列容量", Field("queue", "4", 76)));
-        root.Children.Add(Row("输出", _mp4, _png));
+        root.Children.Add(Row("输出", new TextBlock { Text = "H.264 MP4（固定）" }));
 
         root.Children.Add(Section("时间"));
         root.Children.Add(Row("自动倍率", _renderAuto, _previewAuto));
         root.Children.Add(Row("开始 / 最低球数", Field("start", "2000", 76), Field("full", "10000", 76)));
         root.Children.Add(Row("最低 / 手动倍率", Field("minScale", "0.25", 76), Field("manual", "1", 76)));
         root.Children.Add(Row("量化 / 迟滞球数", Field("quantum", "0.05", 76), Field("hysteresis", "200", 76)));
-        root.Children.Add(Row("最长输出(s)", Field("maxSeconds", "600", 76)));
 
         var configActions = new WrapPanel { Margin = new Thickness(0, 6, 0, 8) };
         _applyButton = Button("应用参数", ApplyConfig);
@@ -107,10 +111,10 @@ public sealed class RenderSettingsView : UserControl, ICommandBusAware
     private async Task ApplyConfig()
     {
         var command = $"render.config w={Text("w")} h={Text("h")} fps={Text("fps")} queue={Text("queue")} "
-                      + $"mp4={Bool(_mp4)} keeppng={Bool(_png)} autoSlow={Bool(_renderAuto)} "
+                      + $"autoSlow={Bool(_renderAuto)} "
                       + $"previewAutoSlow={Bool(_previewAuto)} startBalls={Text("start")} fullBalls={Text("full")} "
                       + $"minScale={Text("minScale")} manualScale={Text("manual")} quantum={Text("quantum")} "
-                      + $"hysteresis={Text("hysteresis")} maxOutputSeconds={Text("maxSeconds")}";
+                      + $"hysteresis={Text("hysteresis")}";
         await Execute(command);
         RefreshConfig();
     }
@@ -120,8 +124,7 @@ public sealed class RenderSettingsView : UserControl, ICommandBusAware
         await ApplyConfig();
         var scenario = _scenario.SelectedIndex > 0
             ? $" scenario={Quote(_scenario.SelectedItem?.ToString() ?? "")}" : "";
-        await Execute($"render.start mode={_mode.SelectedItem ?? "output"} seconds={Text("seconds")} "
-                      + $"seed={Text("seed")} name={Quote(Text("name"))} maxOutputSeconds={Text("maxSeconds")}{scenario}");
+        await Execute($"render.start seed={Text("seed")} name={Quote(Text("name"))}{scenario}");
     }
 
     private async Task Execute(string command)
@@ -165,10 +168,8 @@ public sealed class RenderSettingsView : UserControl, ICommandBusAware
         var active = status.Active;
         foreach (var field in _fields.Values)
             field.IsEnabled = !active;
-        _mode.IsEnabled = !active;
         _scenario.IsEnabled = !active;
-        _mp4.IsEnabled = !active;
-        _png.IsEnabled = !active;
+        _resolution.IsEnabled = !active;
         _renderAuto.IsEnabled = !active;
         _previewAuto.IsEnabled = !active;
         if (_applyButton != null) _applyButton.IsEnabled = !active;
@@ -185,11 +186,19 @@ public sealed class RenderSettingsView : UserControl, ICommandBusAware
         Write("start", c.SlowStartBalls); Write("full", c.SlowFullBalls);
         Write("minScale", c.MinSimulationScale); Write("manual", c.ManualSimulationScale);
         Write("quantum", c.ScaleQuantization); Write("hysteresis", c.HysteresisBalls);
-        Write("maxSeconds", c.MaxOutputSeconds);
-        _mp4.IsChecked = c.PreferMp4;
-        _png.IsChecked = c.KeepPng;
+        var preset = $"{c.Width}x{c.Height}";
+        _resolution.SelectedItem = _resolution.Items.Contains(preset) ? preset : "自定义";
         _renderAuto.IsChecked = c.RenderAutoSlow;
         _previewAuto.IsChecked = c.PreviewAutoSlow;
+    }
+
+    private void ApplyResolutionPreset()
+    {
+        if (_resolution.SelectedItem is not string preset || preset == "自定义" || !_fields.ContainsKey("w"))
+            return;
+        var dimensions = preset.Split('x');
+        _fields["w"].Text = dimensions[0];
+        _fields["h"].Text = dimensions[1];
     }
 
     private TextBox Field(string key, string value, double width)

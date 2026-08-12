@@ -50,7 +50,7 @@ internal sealed class WBallWorkspaceViews
         {
             Defaults = world.Defaults,
             GravityG = 0,
-            BallCollisionEnabled = true,
+            BallCollisionEnabled = battleConfig.Arena.BallCollision,
             Seed = world.Seed,
             WallRestitution = balanceConfig.Current.WallRestitution,
             BallRestitution = balanceConfig.Current.BallRestitution,
@@ -58,7 +58,7 @@ internal sealed class WBallWorkspaceViews
         Battle = new BattleRuntime(world, BattleWorld, battleConfig, weapons, log, balanceConfig);
         Director = new BattleDirector(world, BattleWorld, Battle, weapons, economyBridge, Stage, log, balanceConfig);
         var arenaView = new ArenaView(BattleWorld, Battle);
-        _stageView = new StageView(Stage, world, BattleWorld, Director, _dropZone, arenaView, weapons, renderTime.Current);
+        _stageView = new StageView(Stage, world, BattleWorld, Battle, Director, _dropZone, arenaView, weapons, renderTime.Current);
         SyncAutoStep();
         Stage.Changed += SyncAutoStep;
         Director.StateChanged += SyncAutoStep;
@@ -83,6 +83,8 @@ internal sealed class WBallWorkspaceViews
     public DropZoneView EconomyView => _dropZone;
 
     public StageView StageView => _stageView;
+
+    public RealtimeSimulationCoordinator Coordinator => _stageView.Coordinator;
 
     public IReadOnlyList<ToolWindowDescriptor> ToolWindows { get; }
 

@@ -18,13 +18,28 @@ public sealed class ArenaView : FrameworkElement
     private static readonly Typeface LabelTypeface = new("Segoe UI Semibold");
     [ThreadStatic]
     private static Dictionary<string, SolidColorBrush>? _brushCache;
+    [ThreadStatic]
+    private static Dictionary<(string Text, int Size10, string Color, int Dpi100), FormattedText>? _textCache;
+    [ThreadStatic]
+    private static Dictionary<(int Radius10, int Thickness10, int Fraction360, uint Color), DrawingGroup>? _ringCache;
     private static Dictionary<string, SolidColorBrush> BrushCache =>
         _brushCache ??= new(StringComparer.OrdinalIgnoreCase);
 
     private readonly SceneWorld _world;
     private readonly BattleRuntime _battle;
+    private readonly FrameInvalidationGate _invalidation;
+    private readonly VisualLodController _localLod = new();
+    private readonly BallBitmapLayer _minimalBallLayer = new();
+    private VisualLodLevel _visualLod;
+    private bool _externalVisualLod;
+    private SemaphoreSlim? _runtimeGate;
+    private RealtimeFrameSnapshot? _frame;
     private WriteableBitmap? _territoryBitmap;
+    private int[] _territoryPixels = [];
+    private int[] _territoryPalette = [];
     private int _territoryRenderedVersion = -1;
+    private DrawingGroup? _minimalTurretDrawing;
+    private long _minimalTurretBucket = -1;
 
     public ArenaView(SceneWorld world, BattleRuntime battle)
     {
@@ -33,18 +48,82 @@ public sealed class ArenaView : FrameworkElement
         ClipToBounds = true;
         SnapsToDevicePixels = true;
         RenderOptions.SetBitmapScalingMode(this, BitmapScalingMode.NearestNeighbor);
-        _world.Changed += () => Dispatcher.BeginInvoke(InvalidateVisual);
-        _battle.EventRaised += _ => Dispatcher.BeginInvoke(InvalidateVisual);
+        _invalidation = new FrameInvalidationGate(this);
+        _world.Changed += () =>
+        {
+            if (_frame == null)
+                _invalidation.Request();
+        };
+        _battle.EventRaised += _ =>
+        {
+            if (_frame == null)
+                _invalidation.Request();
+        };
+    }
+
+    public VisualLodLevel VisualLod => _visualLod;
+    public long RenderAllocatedBytes { get; private set; }
+    public long RenderCount { get; private set; }
+
+    public void AttachRuntimeGate(SemaphoreSlim gate) => _runtimeGate = gate;
+
+    public void SetRealtimeFrame(RealtimeFrameSnapshot frame)
+    {
+        _frame = frame;
+        InvalidateVisual();
+    }
+
+    public void SetVisualLod(VisualLodLevel level)
+    {
+        _externalVisualLod = true;
+        if (_visualLod == level)
+            return;
+        _visualLod = level;
+        if (_frame == null)
+            _invalidation.Request();
+        else
+            InvalidateVisual();
     }
 
     protected override void OnRender(DrawingContext dc)
     {
+        var allocatedBefore = GC.GetAllocatedBytesForCurrentThread();
+        try
+        {
+            var gate = _runtimeGate;
+            if (gate == null)
+            {
+                RenderCore(dc);
+                return;
+            }
+            gate.Wait();
+            try
+            {
+                RenderCore(dc);
+            }
+            finally
+            {
+                gate.Release();
+            }
+        }
+        finally
+        {
+            RenderAllocatedBytes += GC.GetAllocatedBytesForCurrentThread() - allocatedBefore;
+            RenderCount++;
+        }
+    }
+
+    private void RenderCore(DrawingContext dc)
+    {
+        var frame = _frame;
+        if (!_externalVisualLod)
+            _visualLod = _localLod.Update(frame?.BattleBallCount ?? _world.Balls.Count);
         var bounds = new Rect(RenderSize);
         dc.DrawRectangle(BackgroundBrush, null, bounds);
 
         // v2.10:世界坐标 → 视口等比缩放,小窗口不再裁剪战场
-        var worldW = Math.Max(1, _world.WorldWidth);
-        var worldH = Math.Max(1, _world.WorldHeight);
+        var worldW = Math.Max(1, frame?.BattleWidth ?? _world.WorldWidth);
+        var worldH = Math.Max(1, frame?.BattleHeight ?? _world.WorldHeight);
         var scale = Math.Min(bounds.Width / worldW, bounds.Height / worldH);
         if (scale <= 0 || double.IsNaN(scale) || double.IsInfinity(scale))
             return;
@@ -53,28 +132,78 @@ public sealed class ArenaView : FrameworkElement
             (bounds.Height - worldH * scale) / 2));
         dc.PushTransform(new ScaleTransform(scale, scale));
 
-        if (_battle.TerritoryMode)
-            DrawTerritory(dc);
+        if (frame?.TerritoryMode ?? _battle.TerritoryMode)
+            DrawTerritory(dc, frame);
 
         var cx = worldW / 2;
         var cy = worldH / 2;
         dc.DrawLine(DividerPen, new Point(cx, 0), new Point(cx, worldH));
         dc.DrawLine(DividerPen, new Point(0, cy), new Point(worldW, cy));
 
-        DrawProjectiles(dc);
-        DrawAssistTransfers(dc);
-        DrawTurrets(dc);
-        DrawHitMarkers(dc);
+        DrawProjectiles(dc, frame);
+        if (_visualLod != VisualLodLevel.Minimal)
+            DrawAssistTransfers(dc, frame);
+        if (_visualLod == VisualLodLevel.Minimal && frame != null)
+            DrawMinimalTurretOverlay(dc, frame);
+        else
+        {
+            DrawTurrets(dc, frame);
+            DrawHitMarkers(dc, frame);
+        }
+        if (frame?.Victory is not null)
+            DrawVictoryHighlight(dc, frame);
 
         dc.Pop();
         dc.Pop();
     }
 
-    /// <summary>v2.9 TR-01:领地位图 — 每格一像素,近邻放大成像素风;仅在领地版本变化时重写。</summary>
-    private void DrawTerritory(DrawingContext dc)
+    private static void DrawVictoryHighlight(DrawingContext dc, RealtimeFrameSnapshot frame)
     {
-        var cols = _battle.TerritoryCols;
-        var rows = _battle.TerritoryRows;
+        var victory = frame.Victory!;
+        var seconds = victory.Progress * Recording.RenderJobService.VictoryAnimationSeconds;
+        var phase = Math.Clamp((seconds - 0.5) / 1.0, 0, 1);
+        if (phase <= 0)
+            return;
+        var color = UiColor.Parse(victory.WinnerColor, Colors.Gold);
+        var pulse = 0.72 + 0.28 * Math.Sin(phase * Math.PI);
+        var alpha = (byte)Math.Clamp(110 + 145 * pulse, 0, 255);
+        var brush = FrozenBrush(Color.FromArgb(alpha, color.R, color.G, color.B));
+        dc.DrawRectangle(null, FrozenPen(brush, 4), new Rect(2, 2, frame.BattleWidth - 4, frame.BattleHeight - 4));
+        for (var index = 0; index < frame.TurretCount; index++)
+        {
+            var turret = frame.Turrets[index];
+            if (!turret.Id.Equals(victory.WinnerId, StringComparison.OrdinalIgnoreCase))
+                continue;
+            var center = new Point(turret.X, turret.Y);
+            var radius = turret.Radius * (1.55 + 0.25 * pulse);
+            dc.DrawEllipse(
+                FrozenBrush(Color.FromArgb((byte)(45 + 55 * pulse), color.R, color.G, color.B)),
+                FrozenPen(brush, Math.Max(3, turret.Radius * 0.16)),
+                center, radius, radius);
+            break;
+        }
+    }
+
+    private void DrawMinimalTurretOverlay(DrawingContext dc, RealtimeFrameSnapshot frame)
+    {
+        var bucket = frame.Sequence / 6;
+        if (_minimalTurretDrawing == null || _minimalTurretBucket != bucket)
+        {
+            var drawing = new DrawingGroup();
+            using (var drawingDc = drawing.Open())
+                DrawSnapshotTurrets(drawingDc, frame);
+            drawing.Freeze();
+            _minimalTurretDrawing = drawing;
+            _minimalTurretBucket = bucket;
+        }
+        dc.DrawDrawing(_minimalTurretDrawing);
+    }
+
+    /// <summary>v2.9 TR-01:领地位图 — 每格一像素,近邻放大成像素风;仅在领地版本变化时重写。</summary>
+    private void DrawTerritory(DrawingContext dc, RealtimeFrameSnapshot? frame)
+    {
+        var cols = frame?.TerritoryCols ?? _battle.TerritoryCols;
+        var rows = frame?.TerritoryRows ?? _battle.TerritoryRows;
         if (cols <= 0 || rows <= 0)
             return;
 
@@ -86,16 +215,34 @@ public sealed class ArenaView : FrameworkElement
             _territoryRenderedVersion = -1;
         }
 
-        if (_territoryRenderedVersion != _battle.TerritoryVersion)
+        var territoryVersion = frame?.TerritoryVersion ?? _battle.TerritoryVersion;
+        if (_territoryRenderedVersion != territoryVersion)
         {
-            var owners = _battle.TerritoryOwners;
-            var ids = _battle.TerritoryFactionIds;
-            var palette = new int[ids.Count];
-            for (var i = 0; i < ids.Count; i++)
+            var owners = frame?.TerritoryOwners ?? _battle.TerritoryOwners;
+            var ownerCount = frame?.TerritoryOwnerCount ?? owners.Length;
+            var ids = frame?.TerritoryFactionIds;
+            var idCount = frame?.TerritoryFactionCount ?? _battle.TerritoryFactionIds.Count;
+            if (_territoryPalette.Length < idCount)
+                Array.Resize(ref _territoryPalette, Math.Max(idCount, Math.Max(8, _territoryPalette.Length * 2)));
+            var palette = _territoryPalette;
+            for (var i = 0; i < idCount; i++)
             {
-                var turret = _battle.Turrets.FirstOrDefault(t =>
-                    t.Id.Equals(ids[i], StringComparison.OrdinalIgnoreCase));
-                var color = UiColor.Parse(turret?.Color ?? "#334155", Colors.SlateGray);
+                var id = ids == null ? _battle.TerritoryFactionIds[i] : ids[i];
+                var colorText = "#334155";
+                if (frame == null)
+                    colorText = _battle.Turrets.FirstOrDefault(t =>
+                        t.Id.Equals(id, StringComparison.OrdinalIgnoreCase))?.Color ?? colorText;
+                else
+                {
+                    for (var turretIndex = 0; turretIndex < frame.TurretCount; turretIndex++)
+                    {
+                        if (!frame.Turrets[turretIndex].Id.Equals(id, StringComparison.OrdinalIgnoreCase))
+                            continue;
+                        colorText = frame.Turrets[turretIndex].Color;
+                        break;
+                    }
+                }
+                var color = UiColor.Parse(colorText, Colors.SlateGray);
                 palette[i] = (255 << 24)
                     | ((int)(color.R * 0.30) << 16)
                     | ((int)(color.G * 0.30) << 8)
@@ -103,23 +250,37 @@ public sealed class ArenaView : FrameworkElement
             }
             const int neutral = unchecked((int)0xFF05_0608);
 
-            var pixels = new int[owners.Length];
-            for (var i = 0; i < owners.Length; i++)
+            if (_territoryPixels.Length < ownerCount)
+                Array.Resize(ref _territoryPixels, Math.Max(ownerCount, Math.Max(256, _territoryPixels.Length * 2)));
+            var pixels = _territoryPixels;
+            for (var i = 0; i < ownerCount; i++)
             {
                 var owner = owners[i];
                 pixels[i] = owner >= 0 && owner < palette.Length ? palette[owner] : neutral;
             }
             _territoryBitmap.WritePixels(new Int32Rect(0, 0, cols, rows), pixels, cols * 4, 0);
-            _territoryRenderedVersion = _battle.TerritoryVersion;
+            _territoryRenderedVersion = territoryVersion;
         }
 
         dc.DrawImage(
             _territoryBitmap,
-            new Rect(0, 0, cols * _battle.TerritoryCellSize, rows * _battle.TerritoryCellSize));
+            new Rect(0, 0, cols * (frame?.TerritoryCellSize ?? _battle.TerritoryCellSize),
+                rows * (frame?.TerritoryCellSize ?? _battle.TerritoryCellSize)));
     }
 
-    private void DrawProjectiles(DrawingContext dc)
+    private void DrawProjectiles(DrawingContext dc, RealtimeFrameSnapshot? frame)
     {
+        if (frame != null)
+        {
+            DrawSnapshotProjectiles(dc, frame);
+            return;
+        }
+        if (_visualLod == VisualLodLevel.Minimal)
+        {
+            _minimalBallLayer.Draw(dc, _world.Balls, _world.WorldWidth, _world.WorldHeight);
+            return;
+        }
+
         foreach (var ball in _world.Balls)
         {
             var brush = GetBrush(ball.Color);
@@ -128,7 +289,7 @@ public sealed class ArenaView : FrameworkElement
 
             // 速度反方向渐隐拖尾(纯渲染,无历史缓存)
             var speedSq = ball.Vx * ball.Vx + ball.Vy * ball.Vy;
-            if (speedSq > 100)
+            if (speedSq > 100 && _visualLod == VisualLodLevel.Full)
             {
                 var trailPen = new Pen(
                     FrozenBrush(Color.FromArgb(70, color.R, color.G, color.B)),
@@ -144,18 +305,21 @@ public sealed class ArenaView : FrameworkElement
                     new Point(ball.X, ball.Y));
             }
 
-            dc.DrawEllipse(
-                FrozenBrush(Color.FromArgb(60, color.R, color.G, color.B)),
-                null,
-                new Point(ball.X, ball.Y),
-                radius * 1.6,
-                radius * 1.6);
+            if (_visualLod != VisualLodLevel.Minimal)
+            {
+                dc.DrawEllipse(
+                    FrozenBrush(Color.FromArgb(60, color.R, color.G, color.B)),
+                    null,
+                    new Point(ball.X, ball.Y),
+                    radius * 1.6,
+                    radius * 1.6);
+            }
             dc.DrawEllipse(brush, null, new Point(ball.X, ball.Y), radius, radius);
 
             // v2.11 BV-01:大球标剩余占领数,随啃格递减
             // v3.1 Q4:字号随弹体(即战场规模)缩放但有下限;超出球体的部分暗淡,防止数字视觉上取代小球
             var captures = ball.Projectile?.CapturesLeft ?? 0;
-            if (captures > 1)
+            if (captures > 1 && _visualLod == VisualLodLevel.Full)
             {
                 var (factor, fontMin, fontMax, outsideOpacity) = _battle.ShellLabelStyle;
                 var dpi = VisualTreeHelper.GetDpi(this).PixelsPerDip;
@@ -207,33 +371,133 @@ public sealed class ArenaView : FrameworkElement
         }
     }
 
-    private void DrawAssistTransfers(DrawingContext dc)
+    private void DrawSnapshotProjectiles(DrawingContext dc, RealtimeFrameSnapshot frame)
     {
-        foreach (var transfer in _battle.AssistVisuals)
+        if (_visualLod == VisualLodLevel.Minimal)
         {
-            var color = UiColor.Parse(transfer.Color, Colors.White);
-            var alpha = (byte)Math.Clamp(120 * transfer.RemainingSeconds / 0.65, 18, 120);
-            var pen = new Pen(FrozenBrush(Color.FromArgb(alpha, color.R, color.G, color.B)), 1.4)
+            _minimalBallLayer.Draw(
+                dc, frame.BattleBalls, frame.BattleBallCount,
+                frame.BattleWidth, frame.BattleHeight);
+            return;
+        }
+
+        for (var i = 0; i < frame.BattleBallCount; i++)
+        {
+            var ball = frame.BattleBalls[i];
+            var brush = GetBrush(ball.Color);
+            var radius = Math.Clamp(ball.Size, 2, 60);
+            var color = UiColor.Parse(ball.Color, Colors.White);
+            var speedSq = ball.Vx * ball.Vx + ball.Vy * ball.Vy;
+            if (speedSq > 100 && _visualLod == VisualLodLevel.Full)
             {
-                StartLineCap = PenLineCap.Round,
-                EndLineCap = PenLineCap.Round,
-            };
-            pen.Freeze();
-            dc.DrawLine(pen, new Point(transfer.FromX, transfer.FromY), new Point(transfer.ToX, transfer.ToY));
-            var text = new FormattedText(
-                $"+{transfer.Amount}",
-                CultureInfo.InvariantCulture,
-                FlowDirection.LeftToRight,
-                LabelTypeface,
-                10,
-                FrozenBrush(Color.FromArgb((byte)Math.Min(230, alpha + 100), color.R, color.G, color.B)),
-                VisualTreeHelper.GetDpi(this).PixelsPerDip);
-            dc.DrawText(text, new Point(transfer.ToX + 5, transfer.ToY - text.Height - 3));
+                var trailPen = new Pen(
+                    FrozenBrush(Color.FromArgb(70, color.R, color.G, color.B)),
+                    Math.Max(1.5, radius * 0.9))
+                {
+                    StartLineCap = PenLineCap.Round,
+                    EndLineCap = PenLineCap.Round,
+                };
+                trailPen.Freeze();
+                dc.DrawLine(
+                    trailPen,
+                    new Point(ball.X - ball.Vx * 0.08, ball.Y - ball.Vy * 0.08),
+                    new Point(ball.X, ball.Y));
+            }
+
+            dc.DrawEllipse(
+                FrozenBrush(Color.FromArgb(60, color.R, color.G, color.B)),
+                null,
+                new Point(ball.X, ball.Y),
+                radius * 1.6,
+                radius * 1.6);
+            dc.DrawEllipse(brush, null, new Point(ball.X, ball.Y), radius, radius);
+
+            if (ball.CapturesLeft <= 1 || _visualLod != VisualLodLevel.Full)
+                continue;
+            DrawProjectileLabel(dc, ball, radius, frame);
         }
     }
 
-    private void DrawTurrets(DrawingContext dc)
+    private void DrawProjectileLabel(
+        DrawingContext dc,
+        RealtimeBallFrame ball,
+        double radius,
+        RealtimeFrameSnapshot frame)
     {
+        var dpi = VisualTreeHelper.GetDpi(this).PixelsPerDip;
+        var fontSize = Math.Clamp(radius * frame.ShellLabelFactor, frame.ShellLabelMin, frame.ShellLabelMax);
+        var label = FormatNumber(ball.CapturesLeft);
+        var text = new FormattedText(
+            label, CultureInfo.InvariantCulture, FlowDirection.LeftToRight,
+            LabelTypeface, fontSize, FrozenBrush(Color.FromArgb(235, 10, 12, 16)), dpi);
+        var origin = new Point(ball.X - text.Width / 2, ball.Y - text.Height / 2);
+        var body = new EllipseGeometry(new Point(ball.X, ball.Y), radius, radius);
+        body.Freeze();
+        dc.PushClip(body);
+        dc.DrawText(text, origin);
+        dc.Pop();
+
+        if ((text.Width <= radius * 2 && text.Height <= radius * 2)
+            || frame.ShellLabelOutsideOpacity <= 0.001)
+            return;
+        var color = UiColor.Parse(ball.Color, Colors.White);
+        var faded = new FormattedText(
+            label, CultureInfo.InvariantCulture, FlowDirection.LeftToRight,
+            LabelTypeface, fontSize,
+            FrozenBrush(Color.FromArgb(
+                (byte)Math.Clamp(235 * frame.ShellLabelOutsideOpacity, 0, 255),
+                color.R, color.G, color.B)), dpi);
+        var box = new RectangleGeometry(new Rect(origin.X - 1, origin.Y - 1, text.Width + 2, text.Height + 2));
+        var outside = new CombinedGeometry(GeometryCombineMode.Exclude, box, body);
+        outside.Freeze();
+        dc.PushClip(outside);
+        dc.DrawText(faded, origin);
+        dc.Pop();
+    }
+
+    private void DrawAssistTransfers(DrawingContext dc, RealtimeFrameSnapshot? frame)
+    {
+        if (frame != null)
+        {
+            for (var i = 0; i < frame.AssistCount; i++)
+                DrawAssistTransfer(dc, frame.Assists[i]);
+            return;
+        }
+        foreach (var transfer in _battle.AssistVisuals)
+        {
+            DrawAssistTransfer(dc, new RealtimeAssistFrame(
+                transfer.FromX, transfer.FromY, transfer.ToX, transfer.ToY,
+                transfer.Color, transfer.Amount, transfer.RemainingSeconds));
+        }
+    }
+
+    private void DrawAssistTransfer(DrawingContext dc, RealtimeAssistFrame transfer)
+    {
+        var color = UiColor.Parse(transfer.Color, Colors.White);
+        var alpha = (byte)Math.Clamp(120 * transfer.RemainingSeconds / 0.65, 18, 120);
+        var pen = new Pen(FrozenBrush(Color.FromArgb(alpha, color.R, color.G, color.B)), 1.4)
+        {
+            StartLineCap = PenLineCap.Round,
+            EndLineCap = PenLineCap.Round,
+        };
+        pen.Freeze();
+        dc.DrawLine(pen, new Point(transfer.FromX, transfer.FromY), new Point(transfer.ToX, transfer.ToY));
+        var text = new FormattedText(
+            $"+{transfer.Amount}", CultureInfo.InvariantCulture, FlowDirection.LeftToRight,
+            LabelTypeface, 10,
+            FrozenBrush(Color.FromArgb((byte)Math.Min(230, alpha + 100), color.R, color.G, color.B)),
+            VisualTreeHelper.GetDpi(this).PixelsPerDip);
+        dc.DrawText(text, new Point(transfer.ToX + 5, transfer.ToY - text.Height - 3));
+    }
+
+    private void DrawTurrets(DrawingContext dc, RealtimeFrameSnapshot? frame)
+    {
+        if (frame != null)
+        {
+            DrawSnapshotTurrets(dc, frame);
+            return;
+        }
+        var totalShield = _battle.Turrets.Sum(turret => Math.Max(0, turret.Shield));
         foreach (var turret in _battle.Turrets)
         {
             if (!turret.Alive)
@@ -243,16 +507,19 @@ public sealed class ArenaView : FrameworkElement
             var center = new Point(turret.TurretX, turret.TurretY);
             var r = turret.TurretRadius;
 
-            // 多层光晕
-            dc.DrawEllipse(FrozenBrush(Color.FromArgb(28, color.R, color.G, color.B)), null, center, r * 2.8, r * 2.8);
-            dc.DrawEllipse(FrozenBrush(Color.FromArgb(55, color.R, color.G, color.B)), null, center, r * 1.9, r * 1.9);
+            // 多层光晕仅在完整档绘制。
+            if (_visualLod == VisualLodLevel.Full)
+            {
+                dc.DrawEllipse(FrozenBrush(Color.FromArgb(28, color.R, color.G, color.B)), null, center, r * 2.8, r * 2.8);
+                dc.DrawEllipse(FrozenBrush(Color.FromArgb(55, color.R, color.G, color.B)), null, center, r * 1.9, r * 1.9);
+            }
 
             // 粒子喷流:像素方块沿炮管方向向外漂移渐隐(纯渲染,稳定哈希+对战时间推导)
             var angle = turret.BarrelAngleDeg * Math.PI / 180;
             var dirX = Math.Cos(angle);
             var dirY = Math.Sin(angle);
             var elapsed = _battle.ElapsedSeconds;
-            for (var i = 0; i < 18; i++)
+            for (var i = 0; i < (_visualLod == VisualLodLevel.Full ? 18 : 0); i++)
             {
                 var r1 = StableRand(turret.Id, i, 1);
                 var r2 = StableRand(turret.Id, i, 2);
@@ -292,8 +559,8 @@ public sealed class ArenaView : FrameworkElement
                 r,
                 r);
 
-            // v2.12.3 NB-01/02:外圈=护盾,内圈=本方弹药占四方总弹药比例(血量概念已取消)
-            var shieldRatio = turret.MaxShield <= 0 ? 0 : Math.Clamp(turret.Shield / turret.MaxShield, 0, 1);
+            // 外圈与内圈都表达四方占比，不再依赖已退役的护盾上限。
+            var shieldRatio = ArenaFormulas.ShieldShare(turret.Shield, totalShield);
             var totalAmmo = _battle.Turrets.Where(t => t.Alive).Sum(t => _battle.AmmoTotalOf(t));
             var ammoRatio = totalAmmo <= 0 ? 0 : Math.Clamp(_battle.AmmoTotalOf(turret) / (double)totalAmmo, 0, 1);
             DrawRingGauge(
@@ -311,9 +578,9 @@ public sealed class ArenaView : FrameworkElement
                 ammoRatio,
                 Color.FromArgb(255, LightenStrong(color.R), LightenStrong(color.G), LightenStrong(color.B)));
 
-            // v2.10 TU-04:圆心直接标数值(领地格数),不再画名字卡片
+            // v3.5.2:炮台圆心显示当前护盾值，和离线出片保持一致。
             var valueText = new FormattedText(
-                FormatNumber((long)turret.Hp),
+                FormatNumber((long)Math.Max(0, Math.Floor(_battle.ShieldValueOf(turret) + 1e-12))),
                 CultureInfo.InvariantCulture,
                 FlowDirection.LeftToRight,
                 LabelTypeface,
@@ -339,6 +606,90 @@ public sealed class ArenaView : FrameworkElement
         }
     }
 
+    private void DrawSnapshotTurrets(DrawingContext dc, RealtimeFrameSnapshot frame)
+    {
+        var totalShield = 0d;
+        long totalAmmo = 0;
+        for (var i = 0; i < frame.TurretCount; i++)
+        {
+            var turret = frame.Turrets[i];
+            totalShield += Math.Max(0, turret.Shield);
+            if (turret.Alive)
+                totalAmmo = SaturatingAdd(totalAmmo, turret.AmmoTotal);
+        }
+
+        for (var turretIndex = 0; turretIndex < frame.TurretCount; turretIndex++)
+        {
+            var turret = frame.Turrets[turretIndex];
+            if (!turret.Alive)
+                continue;
+
+            var color = UiColor.Parse(turret.Color, Colors.SlateGray);
+            var center = new Point(turret.X, turret.Y);
+            var r = turret.Radius;
+            if (_visualLod == VisualLodLevel.Full)
+            {
+                dc.DrawEllipse(FrozenBrush(Color.FromArgb(28, color.R, color.G, color.B)), null, center, r * 2.8, r * 2.8);
+                dc.DrawEllipse(FrozenBrush(Color.FromArgb(55, color.R, color.G, color.B)), null, center, r * 1.9, r * 1.9);
+            }
+
+            var angle = turret.BarrelAngleDeg * Math.PI / 180;
+            var dirX = Math.Cos(angle);
+            var dirY = Math.Sin(angle);
+            for (var i = 0; i < (_visualLod == VisualLodLevel.Full ? 18 : 0); i++)
+            {
+                var r1 = StableRand(turret.Id, i, 1);
+                var r2 = StableRand(turret.Id, i, 2);
+                var r3 = StableRand(turret.Id, i, 3);
+                var progress = (frame.ElapsedSeconds * (0.25 + 0.45 * r1) + r2) % 1.0;
+                var dist = r * (0.7 + progress * 2.4);
+                var lateral = (r3 - 0.5) * r * (0.5 + progress * 1.1);
+                var px = center.X + dirX * dist - dirY * lateral;
+                var py = center.Y + dirY * dist + dirX * lateral;
+                var alpha = (byte)(190 * (1 - progress));
+                var pixel = 2.0 + 3.0 * r1;
+                dc.DrawRectangle(
+                    FrozenBrush(Color.FromArgb(alpha, Lighten(color.R), Lighten(color.G), Lighten(color.B))),
+                    null, new Rect(px - pixel / 2, py - pixel / 2, pixel, pixel));
+            }
+
+            var muzzle = new Point(center.X + dirX * r * 1.8, center.Y + dirY * r * 1.8);
+            var barrelPen = new Pen(
+                FrozenBrush(Color.FromArgb(235, Lighten(color.R), Lighten(color.G), Lighten(color.B))),
+                Math.Max(4, r * 0.34))
+            {
+                StartLineCap = PenLineCap.Round,
+                EndLineCap = PenLineCap.Round,
+            };
+            barrelPen.Freeze();
+            dc.DrawLine(barrelPen, center, muzzle);
+            dc.DrawEllipse(FrozenBrush(Colors.White), null, muzzle, Math.Max(2.5, r * 0.14), Math.Max(2.5, r * 0.14));
+            dc.DrawEllipse(FrozenBrush(Color.FromArgb(230, color.R, color.G, color.B)), null, center, r, r);
+
+            var shieldRatio = ArenaFormulas.ShieldShare(turret.Shield, totalShield);
+            var ammoRatio = totalAmmo <= 0 ? 0 : Math.Clamp(turret.AmmoTotal / (double)totalAmmo, 0, 1);
+            DrawRingGauge(
+                dc, center, r * frame.ShieldRingScale, Math.Max(2.5, r * 0.13),
+                shieldRatio, Color.FromArgb(235, Lighten(color.R), Lighten(color.G), Lighten(color.B)));
+            DrawRingGauge(
+                dc, center, r * 1.22, Math.Max(3, r * 0.16),
+                ammoRatio, Color.FromArgb(255, LightenStrong(color.R), LightenStrong(color.G), LightenStrong(color.B)));
+
+            var valueText = CachedText(
+                FormatNumber((long)Math.Max(0, Math.Floor(turret.ShieldValue + 1e-12))),
+                Math.Max(9, r * 0.55), Colors.White);
+            dc.DrawText(valueText, new Point(center.X - valueText.Width / 2, center.Y - valueText.Height / 2));
+
+            var ammoText = CachedText(
+                $"{FormatNumber(turret.SmallAmmo)}·{FormatNumber(turret.AmmoTotal - turret.SmallAmmo)}",
+                10, Color.FromArgb(225, Lighten(color.R), Lighten(color.G), Lighten(color.B)));
+            dc.DrawText(ammoText, new Point(center.X - ammoText.Width / 2, center.Y + r * 1.75 + 4));
+        }
+    }
+
+    private static long SaturatingAdd(long left, long right) =>
+        right > 0 && left > long.MaxValue - right ? long.MaxValue : left + right;
+
     /// <summary>环形仪表:暗轨 + 顶端起顺时针占比弧。</summary>
     private static void DrawRingGauge(
         DrawingContext dc,
@@ -348,41 +699,64 @@ public sealed class ArenaView : FrameworkElement
         double fraction,
         Color color)
     {
-        var trackPen = new Pen(FrozenBrush(Color.FromArgb(46, color.R, color.G, color.B)), thickness);
-        trackPen.Freeze();
-        dc.DrawEllipse(null, trackPen, center, radius, radius);
-
         fraction = Math.Clamp(fraction, 0, 1);
-        if (fraction <= 0.001)
-            return;
-
-        var pen = new Pen(FrozenBrush(color), thickness)
+        var radius10 = (int)Math.Round(radius * 10);
+        var thickness10 = (int)Math.Round(thickness * 10);
+        var fraction360 = (int)Math.Round(fraction * 360);
+        var colorValue = ((uint)color.A << 24) | ((uint)color.R << 16) | ((uint)color.G << 8) | color.B;
+        var cache = _ringCache ??= new();
+        var key = (radius10, thickness10, fraction360, colorValue);
+        if (!cache.TryGetValue(key, out var drawing))
         {
-            StartLineCap = PenLineCap.Round,
-            EndLineCap = PenLineCap.Round,
-        };
-        pen.Freeze();
-
-        if (fraction >= 0.999)
-        {
-            dc.DrawEllipse(null, pen, center, radius, radius);
-            return;
+            var quantizedRadius = radius10 / 10d;
+            var quantizedThickness = Math.Max(0.1, thickness10 / 10d);
+            var quantizedFraction = fraction360 / 360d;
+            drawing = new DrawingGroup();
+            using (var drawingDc = drawing.Open())
+            {
+                var trackPen = new Pen(
+                    FrozenBrush(Color.FromArgb(46, color.R, color.G, color.B)),
+                    quantizedThickness);
+                trackPen.Freeze();
+                drawingDc.DrawEllipse(null, trackPen, default, quantizedRadius, quantizedRadius);
+                if (quantizedFraction > 0.001)
+                {
+                    var pen = new Pen(FrozenBrush(color), quantizedThickness)
+                    {
+                        StartLineCap = PenLineCap.Round,
+                        EndLineCap = PenLineCap.Round,
+                    };
+                    pen.Freeze();
+                    if (quantizedFraction >= 0.999)
+                        drawingDc.DrawEllipse(null, pen, default, quantizedRadius, quantizedRadius);
+                    else
+                    {
+                        var start = -Math.PI / 2;
+                        var sweep = quantizedFraction * Math.PI * 2;
+                        var from = new Point(quantizedRadius * Math.Cos(start), quantizedRadius * Math.Sin(start));
+                        var to = new Point(
+                            quantizedRadius * Math.Cos(start + sweep),
+                            quantizedRadius * Math.Sin(start + sweep));
+                        var geometry = new StreamGeometry();
+                        using (var gctx = geometry.Open())
+                        {
+                            gctx.BeginFigure(from, false, false);
+                            gctx.ArcTo(to, new Size(quantizedRadius, quantizedRadius), 0,
+                                sweep > Math.PI, SweepDirection.Clockwise, true, false);
+                        }
+                        geometry.Freeze();
+                        drawingDc.DrawGeometry(null, pen, geometry);
+                    }
+                }
+            }
+            drawing.Freeze();
+            if (cache.Count >= 4096)
+                cache.Clear();
+            cache[key] = drawing;
         }
-
-        var start = -Math.PI / 2;
-        var sweep = fraction * Math.PI * 2;
-        var from = new Point(center.X + radius * Math.Cos(start), center.Y + radius * Math.Sin(start));
-        var to = new Point(
-            center.X + radius * Math.Cos(start + sweep),
-            center.Y + radius * Math.Sin(start + sweep));
-        var geometry = new StreamGeometry();
-        using (var gctx = geometry.Open())
-        {
-            gctx.BeginFigure(from, false, false);
-            gctx.ArcTo(to, new Size(radius, radius), 0, sweep > Math.PI, SweepDirection.Clockwise, true, false);
-        }
-        geometry.Freeze();
-        dc.DrawGeometry(null, pen, geometry);
+        dc.PushTransform(new TranslateTransform(center.X, center.Y));
+        dc.DrawDrawing(drawing);
+        dc.Pop();
     }
 
     private static byte Lighten(byte channel) => (byte)Math.Min(255, channel + 60);
@@ -400,24 +774,33 @@ public sealed class ArenaView : FrameworkElement
         return (hash & 0xFFFFFF) / (double)0x1000000;
     }
 
-    private void DrawHitMarkers(DrawingContext dc)
+    private void DrawHitMarkers(DrawingContext dc, RealtimeFrameSnapshot? frame)
     {
-        var elapsed = _battle.ElapsedSeconds;
+        var elapsed = frame?.ElapsedSeconds ?? _battle.ElapsedSeconds;
+        if (frame != null)
+        {
+            for (var i = 0; i < frame.HitCount; i++)
+                DrawHitMarker(dc, frame.Hits[i], elapsed);
+            return;
+        }
         foreach (var marker in _battle.HitMarkers)
         {
-            var age = elapsed - marker.Time;
-            if (age is < 0 or > 1.2)
-                continue;
-            var fade = 1 - age / 1.2;
-            var alpha = (byte)(240 * fade);
-            var y = marker.Y - 40 - age * 36;
-            DrawLabel(
-                dc,
-                $"-{FormatNumber((long)marker.Damage)}",
-                new Point(marker.X - 16, y),
-                13,
-                Color.FromArgb(alpha, 255, 235, 160));
+            DrawHitMarker(dc, new RealtimeHitFrame(marker.Time, marker.X, marker.Y, marker.Damage), elapsed);
         }
+    }
+
+    private void DrawHitMarker(DrawingContext dc, RealtimeHitFrame marker, double elapsed)
+    {
+        var age = elapsed - marker.Time;
+        if (age is < 0 or > 1.2)
+            return;
+        var fade = 1 - age / 1.2;
+        var alpha = (byte)(240 * fade);
+        var y = marker.Y - 40 - age * 36;
+        DrawLabel(
+            dc, $"-{FormatNumber((long)marker.Damage)}",
+            new Point(marker.X - 16, y), 13,
+            Color.FromArgb(alpha, 255, 235, 160));
     }
 
     private static string FormatNumber(long value)
@@ -435,15 +818,24 @@ public sealed class ArenaView : FrameworkElement
 
     private void DrawLabel(DrawingContext dc, string text, Point origin, double size, Color color)
     {
-        var formatted = new FormattedText(
-            text,
-            CultureInfo.InvariantCulture,
-            FlowDirection.LeftToRight,
-            LabelTypeface,
-            size,
-            FrozenBrush(color),
-            VisualTreeHelper.GetDpi(this).PixelsPerDip);
+        var formatted = CachedText(text, size, color);
         dc.DrawText(formatted, origin);
+    }
+
+    private FormattedText CachedText(string text, double size, Color color)
+    {
+        var dpi = VisualTreeHelper.GetDpi(this).PixelsPerDip;
+        var cache = _textCache ??= new();
+        var key = (text, (int)Math.Round(size * 10), color.ToString(), (int)Math.Round(dpi * 100));
+        if (cache.TryGetValue(key, out var formatted))
+            return formatted;
+        formatted = new FormattedText(
+            text, CultureInfo.InvariantCulture, FlowDirection.LeftToRight,
+            LabelTypeface, size, FrozenBrush(color), dpi);
+        if (cache.Count >= 2048)
+            cache.Clear();
+        cache[key] = formatted;
+        return formatted;
     }
 
     private static SolidColorBrush GetBrush(string color)
@@ -460,8 +852,14 @@ public sealed class ArenaView : FrameworkElement
 
     private static SolidColorBrush FrozenBrush(Color color)
     {
+        var key = color.ToString();
+        if (BrushCache.TryGetValue(key, out var cached))
+            return cached;
         var brush = new SolidColorBrush(color);
         brush.Freeze();
+        if (BrushCache.Count >= 512)
+            BrushCache.Clear();
+        BrushCache[key] = brush;
         return brush;
     }
 

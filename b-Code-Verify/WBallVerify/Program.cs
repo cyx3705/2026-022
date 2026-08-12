@@ -28,9 +28,14 @@ var log = run.Log;
 
 void Check(string name, bool passed, string? detail = null) => run.Check(name, passed, detail);
 
-string RunHash(BalanceConfig balance, int seed, int frames, out Harness harness)
+string RunHash(
+    BalanceConfig balance,
+    int seed,
+    int frames,
+    out Harness harness,
+    ArenaLayoutConfig? arena = null)
 {
-    harness = new Harness(dataRoot, log, balance);
+    harness = new Harness(dataRoot, log, balance, arena);
     harness.Director.Start(seed, countdownSeconds: 0);
     harness.Director.AdvanceSteps(frames);
     return harness.Director.DeterministicHash();
@@ -39,352 +44,31 @@ string RunHash(BalanceConfig balance, int seed, int frames, out Harness harness)
 ArchitectureSuite.Run(run);
 TimelineSuite.Run(run);
 
+if (args.Contains("--assist-fixes", StringComparer.OrdinalIgnoreCase))
+{
+    AssistSuite.VerifyV352Fixes(run);
+    return artifacts.Complete(run.Conclude("ASSIST FIXES"));
+}
+
+if (args.Contains("--friendly-absorb-smoke", StringComparer.OrdinalIgnoreCase))
+    return artifacts.Complete(AssistSuite.RunFriendlyAbsorbSmoke(run));
+
+if (args.Contains("--gameplay-fixes", StringComparer.OrdinalIgnoreCase))
+    return artifacts.Complete(GameplayRegressionSuite.Run(run));
+
 if (args.Contains("--render-page-smoke", StringComparer.OrdinalIgnoreCase))
     return artifacts.Complete(WBall.Verify.Suites.PageSuite.Run(run));
 
-if (args.Contains("--render-smoke", StringComparer.OrdinalIgnoreCase))
-{
-    var renderHarness = new Harness(dataRoot, log, new BalanceConfig());
-    var renderRoot = artifacts.Suite("render-smoke");
-    var renderTime = new RenderTimeConfigStore(Path.Combine(renderRoot, "config"), log);
-    renderTime.Current.Width = 640;
-    renderTime.Current.Height = 360;
-    renderTime.Current.Fps = 2;
-    renderTime.Current.PreferMp4 = false;
-    renderTime.Current.KeepPng = true;
-    renderTime.Current.RenderAutoSlow = false;
-    renderTime.Save();
-    var renderWorkspace = Path.Combine(renderRoot, "workspace");
-    var renderScenarios = new ScenarioStore(renderWorkspace, log);
-    using var renderJobs = new RenderJobService(
-        renderHarness.EconomyWorld,
-        renderHarness.BattleConfig,
-        renderHarness.BalanceStore,
-        renderHarness.Weapons,
-        new StageState(),
-        renderScenarios,
-        renderTime,
-        dataRoot,
-        renderWorkspace,
-        log);
-    var liveHash = renderHarness.Director.DeterministicHash();
-    var liveConfigSnapshot = JsonSerializer.Serialize(new
-    {
-        renderHarness.BattleConfig.Turrets,
-        renderHarness.BattleConfig.Arena,
-        Balance = renderHarness.BalanceStore.Current,
-    });
-    renderJobs.Start(new RenderJobRequest(RenderEndMode.Output, 1, 42, "smoke"));
-    var deadline = DateTime.UtcNow.AddSeconds(30);
-    while (renderJobs.Status.Active && DateTime.UtcNow < deadline)
-        Thread.Sleep(50);
-    var renderStatus = renderJobs.Status;
-    Check("render smoke completes", renderStatus.Stage == "completed", renderStatus.Error);
-    Check("render smoke writes exact frames", renderStatus.Frame == 2, $"frames={renderStatus.Frame}");
-    Check("render smoke writes manifest", File.Exists(Path.Combine(renderStatus.OutputDirectory ?? "", "manifest.json")));
-    Check("render smoke writes PNG stream",
-        Directory.Exists(Path.Combine(renderStatus.OutputDirectory ?? "", "frames"))
-        && Directory.EnumerateFiles(Path.Combine(renderStatus.OutputDirectory!, "frames"), "*.png").Count() == 2);
-    Check("render smoke does not mutate live world", liveHash == renderHarness.Director.DeterministicHash());
+if (args.Contains("--render-smoke", StringComparer.OrdinalIgnoreCase)
+    || args.Contains("--render-v36", StringComparer.OrdinalIgnoreCase))
+    return artifacts.Complete(RenderV36Suite.Run(run));
 
-    var firstFingerprint = RenderFingerprint(renderStatus.ManifestPath!);
-    renderJobs.Start(new RenderJobRequest(RenderEndMode.Output, 1, 42, "smoke-repeat"));
-    deadline = DateTime.UtcNow.AddSeconds(30);
-    while (renderJobs.Status.Active && DateTime.UtcNow < deadline)
-        Thread.Sleep(50);
-    var repeatStatus = renderJobs.Status;
-    var repeatFingerprint = RenderFingerprint(repeatStatus.ManifestPath!);
-    Check("render same input has identical result and sampled-frame hashes",
-        repeatStatus.Stage == "completed" && firstFingerprint == repeatFingerprint,
-        $"first={firstFingerprint} repeat={repeatFingerprint}");
-
-    var scenarioSeed = renderJobs.ResolveSeed("demo2");
-    renderJobs.Start(new RenderJobRequest(RenderEndMode.Output, 0.5, scenarioSeed, "scenario", Scenario: "demo2"));
-    deadline = DateTime.UtcNow.AddSeconds(30);
-    while (renderJobs.Status.Active && DateTime.UtcNow < deadline)
-        Thread.Sleep(50);
-    var scenarioStatus = renderJobs.Status;
-    using (var scenarioManifest = JsonDocument.Parse(File.ReadAllText(scenarioStatus.ManifestPath!)))
-    {
-        var request = scenarioManifest.RootElement.GetProperty("request");
-        Check("render scenario freezes named source and uses scenario seed",
-            scenarioStatus.Stage == "completed"
-            && request.GetProperty("scenario").GetString() == "demo2"
-            && request.GetProperty("seed").GetInt32() == 7);
-    }
-    Check("render scenario does not mutate live world", liveHash == renderHarness.Director.DeterministicHash());
-
-    renderJobs.Start(new RenderJobRequest(RenderEndMode.Output, 60, 43, "cancel"));
-    renderJobs.Pause();
-    Thread.Sleep(150);
-    var pausedFrame = renderJobs.Status.Frame;
-    Thread.Sleep(150);
-    Check("render pause stops frame progress", renderJobs.Status.Stage == "paused" && renderJobs.Status.Frame == pausedFrame,
-        $"stage={renderJobs.Status.Stage} frame={renderJobs.Status.Frame}");
-    var cancelWatch = Stopwatch.StartNew();
-    renderJobs.Cancel();
-    deadline = DateTime.UtcNow.AddSeconds(5);
-    while (renderJobs.Status.Active && DateTime.UtcNow < deadline)
-        Thread.Sleep(50);
-    cancelWatch.Stop();
-    var cancelStatus = renderJobs.Status;
-    Check("render cancel reaches terminal state within 2 seconds",
-        cancelStatus.Stage == "canceled" && cancelWatch.Elapsed < TimeSpan.FromSeconds(2),
-        $"stage={cancelStatus.Stage} elapsed={cancelWatch.Elapsed.TotalMilliseconds:0.###}ms");
-    using (var cancelManifest = JsonDocument.Parse(File.ReadAllText(cancelStatus.ManifestPath!)))
-    {
-        Check("render cancel manifest and partial output agree",
-            cancelManifest.RootElement.GetProperty("status").GetString() == "canceled"
-            && !Directory.EnumerateFiles(cancelStatus.OutputDirectory!, "*.partial*", SearchOption.AllDirectories).Any());
-    }
-
-    renderTime.Current.Fps = 1;
-    renderTime.Current.PreferMp4 = true;
-    renderTime.Save();
-    renderJobs.Start(new RenderJobRequest(RenderEndMode.Output, 1, 44, "mp4"));
-    deadline = DateTime.UtcNow.AddSeconds(30);
-    while (renderJobs.Status.Active && DateTime.UtcNow < deadline)
-        Thread.Sleep(50);
-    var mp4Status = renderJobs.Status;
-    var mp4Ok = !string.IsNullOrWhiteSpace(mp4Status.Mp4Path)
-                && File.Exists(mp4Status.Mp4Path)
-                && new FileInfo(mp4Status.Mp4Path).Length > 0;
-    var pngFallback = !string.IsNullOrWhiteSpace(mp4Status.Error)
-                      && Directory.EnumerateFiles(Path.Combine(mp4Status.OutputDirectory!, "frames"), "*.png").Any();
-    Check("render MP4 streams or falls back explicitly",
-        mp4Status.Stage == "completed" && (mp4Ok || pngFallback),
-        $"mp4={mp4Status.Mp4Path ?? "-"} error={mp4Status.Error ?? "-"}");
-
-    renderTime.Current.Width = 320;
-    renderTime.Current.Height = 240;
-    renderTime.Current.Fps = 1;
-    renderTime.Current.PreferMp4 = false;
-    renderTime.Current.RenderAutoSlow = true;
-    renderTime.Save();
-    var stressScenario = renderScenarios.Load("demo4");
-    stressScenario.Name = "stress10k";
-    foreach (var turret in stressScenario.Turrets)
-        turret.InitialBalls = 2_500;
-    renderScenarios.Save(stressScenario);
-    var baselineMemory = Process.GetCurrentProcess().WorkingSet64;
-    renderJobs.Start(new RenderJobRequest(
-        RenderEndMode.Output, 1, stressScenario.Seed, "stress-10k", Scenario: stressScenario.Name));
-    deadline = DateTime.UtcNow.AddSeconds(60);
-    while (renderJobs.Status.Active && DateTime.UtcNow < deadline)
-        Thread.Sleep(50);
-    var stressStatus = renderJobs.Status;
-    using (var stressManifest = JsonDocument.Parse(File.ReadAllText(stressStatus.ManifestPath!)))
-    {
-        var peak = stressManifest.RootElement.GetProperty("peakWorkingSetBytes").GetInt64();
-        Check("render 10k balls reaches minimum simulation scale without dropping frames",
-            stressStatus.Stage == "completed" && stressStatus.Frame == 1
-            && Math.Abs(stressStatus.SimulationScale - 0.25) < 1e-9,
-            $"stage={stressStatus.Stage} frame={stressStatus.Frame} scale={stressStatus.SimulationScale}");
-        Check("render 10k working-set growth stays below 512 MiB",
-            peak - baselineMemory < 512L * 1024 * 1024,
-            $"growth={(peak - baselineMemory) / 1024.0 / 1024:0.##} MiB");
-        Check("render BGRA and projection queue stay bounded",
-            stressManifest.RootElement.GetProperty("peakBgraFrames").GetInt32() <= 1
-            && stressManifest.RootElement.GetProperty("peakQueueDepth").GetInt32() <= renderTime.Current.QueueCapacity);
-    }
-
-    renderTime.Current.RenderAutoSlow = false;
-    renderTime.Current.ManualSimulationScale = 0.10;
-    renderTime.Save();
-    renderJobs.Start(new RenderJobRequest(
-        RenderEndMode.Output, 1, stressScenario.Seed, "stress-10k-manual", Scenario: stressScenario.Name));
-    deadline = DateTime.UtcNow.AddSeconds(60);
-    while (renderJobs.Status.Active && DateTime.UtcNow < deadline)
-        Thread.Sleep(50);
-    var manualStressStatus = renderJobs.Status;
-    Check("render 10k manual scale ignores pressure when auto slow is disabled",
-        manualStressStatus.Stage == "completed"
-        && Math.Abs(manualStressStatus.SimulationScale - 0.10) < 1e-9
-        && Math.Abs(manualStressStatus.SimulationTime - 0.10) <= 1.0 / 60,
-        $"stage={manualStressStatus.Stage} scale={manualStressStatus.SimulationScale} simulation={manualStressStatus.SimulationTime}");
-
-    var recordRegistry = new CommandRegistry();
-    RecordCommands.Register(recordRegistry, renderJobs);
-    var recordBus = new CommandBus(recordRegistry, log);
-    var aliasConfig = await recordBus.ExecuteAsync(
-        "record.config w=320 h=240 fps=1 mp4=false keeppng=true autoSlow=false manualScale=0.1",
-        "verify");
-    var aliasStart = await recordBus.ExecuteAsync(
-        "record.start mode=output seconds=1 seed=46 name=record-alias",
-        "verify");
-    deadline = DateTime.UtcNow.AddSeconds(30);
-    while (renderJobs.Status.Active && DateTime.UtcNow < deadline)
-        Thread.Sleep(50);
-    var renderStatusCommand = await recordBus.ExecuteAsync("render.status", "verify");
-    var recordStatusCommand = await recordBus.ExecuteAsync("record.status", "verify");
-    Check("record.config/start/status preserve render semantics",
-        aliasConfig.Success && aliasStart.Success && renderJobs.Status.Stage == "completed"
-        && recordStatusCommand.Success && renderStatusCommand.Success
-        && recordStatusCommand.Message.EndsWith(renderStatusCommand.Message, StringComparison.Ordinal));
-    await recordBus.ExecuteAsync(
-        "record.start mode=output seconds=60 seed=47 name=record-stop",
-        "verify");
-    var aliasStop = await recordBus.ExecuteAsync("record.stop", "verify");
-    deadline = DateTime.UtcNow.AddSeconds(5);
-    while (renderJobs.Status.Active && DateTime.UtcNow < deadline)
-        Thread.Sleep(25);
-    Check("record.stop cancels and a clean render task can restart",
-        aliasStop.Success && renderJobs.Status.Stage == "canceled",
-        $"stop={aliasStop.Success} stage={renderJobs.Status.Stage}");
-    var restart = await recordBus.ExecuteAsync(
-        "render.start mode=output seconds=1 seed=48 name=after-record-stop",
-        "verify");
-    deadline = DateTime.UtcNow.AddSeconds(30);
-    while (renderJobs.Status.Active && DateTime.UtcNow < deadline)
-        Thread.Sleep(50);
-    Check("render restart after record.stop completes", restart.Success && renderJobs.Status.Stage == "completed",
-        $"start={restart.Success} stage={renderJobs.Status.Stage} message={restart.Message}");
-
-    var liveConfigAfter = JsonSerializer.Serialize(new
-    {
-        renderHarness.BattleConfig.Turrets,
-        renderHarness.BattleConfig.Arena,
-        Balance = renderHarness.BalanceStore.Current,
-    });
-    Check("render leaves battle arena and balance configuration unchanged",
-        liveConfigSnapshot == liveConfigAfter && liveHash == renderHarness.Director.DeterministicHash());
-
-    Console.WriteLine(failures.Count == 0 ? "RENDER SMOKE PASS" : $"RENDER SMOKE FAIL ({failures.Count})");
-    return artifacts.Complete(failures.Count == 0 ? 0 : 1);
-}
-
-if (args.Contains("--render-long-acceptance", StringComparer.OrdinalIgnoreCase))
-{
-    var longHarness = new Harness(dataRoot, log, new BalanceConfig());
-    var longSuite = artifacts.Suite("render-long");
-    var longConfig = new RenderTimeConfigStore(Path.Combine(longSuite, "config"), log);
-    longConfig.Current.Width = 1920;
-    longConfig.Current.Height = 1080;
-    longConfig.Current.Fps = 30;
-    longConfig.Current.QueueCapacity = 4;
-    longConfig.Current.PreferMp4 = false;
-    longConfig.Current.KeepPng = true;
-    longConfig.Current.RenderAutoSlow = true;
-    longConfig.Current.ManualSimulationScale = 1;
-    longConfig.Current.SlowStartBalls = 100;
-    longConfig.Current.SlowFullBalls = 500;
-    longConfig.Save();
-    var longWorkspace = Path.Combine(longSuite, "workspace");
-    var longScenarios = new ScenarioStore(longWorkspace, log);
-    var jointScenario = longScenarios.Load("demo4");
-    jointScenario.Name = "joint-v33-render";
-    jointScenario.Balance ??= new BalanceConfig();
-    jointScenario.Balance.FriendlyAssistEnabled = true;
-    jointScenario.Balance.FriendlyAbsorbSmallRate = 10;
-    jointScenario.Balance.FriendlyAssistReachFactor = 3;
-    jointScenario.Balance.SmallPackThreshold = 2;
-    jointScenario.Balance.SmallPackRatio = 2;
-    jointScenario.Balance.SmallPackMax = 64;
-    jointScenario.Arena.InitialShellCount = 100;
-    jointScenario.Arena.InitialShellValue = 100;
-    jointScenario.Arena.SmallBallSpeed = 400;
-    var jointShellWeapon = jointScenario.Weapons.First(x => x.Kind == WeaponKind.Size);
-    jointShellWeapon.Speed = 60;
-    longScenarios.Save(jointScenario);
-    using var longJobs = new RenderJobService(
-        longHarness.EconomyWorld, longHarness.BattleConfig, longHarness.BalanceStore,
-        longHarness.Weapons, new StageState(), longScenarios, longConfig,
-        dataRoot, longWorkspace, log);
-
-    longJobs.Start(new RenderJobRequest(
-        RenderEndMode.Output, 5, 51, "1080p-short", Scenario: jointScenario.Name));
-    var deadline = DateTime.UtcNow.AddMinutes(5);
-    while (longJobs.Status.Active && DateTime.UtcNow < deadline)
-        Thread.Sleep(25);
-    var shortStatus = longJobs.Status;
-    using var shortManifest = JsonDocument.Parse(File.ReadAllText(shortStatus.ManifestPath!));
-    var shortPeak = shortManifest.RootElement.GetProperty("peakWorkingSetBytes").GetInt64();
-
-    System.Windows.Threading.Dispatcher? uiDispatcher = null;
-    var uiReady = new ManualResetEventSlim();
-    var uiTicks = 0;
-    var uiMaxGapMs = 0d;
-    var uiThread = new Thread(() =>
-    {
-        uiDispatcher = System.Windows.Threading.Dispatcher.CurrentDispatcher;
-        var lastTick = Stopwatch.GetTimestamp();
-        var timer = new System.Windows.Threading.DispatcherTimer(
-            TimeSpan.FromMilliseconds(50),
-            System.Windows.Threading.DispatcherPriority.Background,
-            (_, _) =>
-            {
-                var now = Stopwatch.GetTimestamp();
-                uiMaxGapMs = Math.Max(uiMaxGapMs, Stopwatch.GetElapsedTime(lastTick, now).TotalMilliseconds);
-                lastTick = now;
-                _ = longJobs.Status;
-                uiTicks++;
-            },
-            uiDispatcher);
-        timer.Start();
-        uiReady.Set();
-        System.Windows.Threading.Dispatcher.Run();
-        timer.Stop();
-    });
-    uiThread.SetApartmentState(ApartmentState.STA);
-    uiThread.Start();
-    uiReady.Wait();
-    var startWatch = Stopwatch.StartNew();
-    uiDispatcher!.Invoke(() =>
-        longJobs.Start(new RenderJobRequest(
-            RenderEndMode.Output, 60, 52, "1080p-60s", Scenario: jointScenario.Name)));
-    startWatch.Stop();
-    deadline = DateTime.UtcNow.AddMinutes(15);
-    while (longJobs.Status.Active && DateTime.UtcNow < deadline)
-        Thread.Sleep(100);
-    uiDispatcher.InvokeShutdown();
-    uiThread.Join();
-
-    var longStatus = longJobs.Status;
-    using var longManifest = JsonDocument.Parse(File.ReadAllText(longStatus.ManifestPath!));
-    var longRoot = longManifest.RootElement;
-    var longPeak = longRoot.GetProperty("peakWorkingSetBytes").GetInt64();
-    var framesDirectory = longStatus.PngDirectory!;
-    var frameFiles = Directory.EnumerateFiles(framesDirectory, "frame_*.png")
-        .OrderBy(x => x, StringComparer.Ordinal)
-        .ToArray();
-    Check("render 60s 1080p30 completes all continuous frames",
-        longStatus.Stage == "completed" && longStatus.Frame == 1_800
-        && frameFiles.Length == 1_800
-        && Path.GetFileName(frameFiles[0]) == "frame_000000.png"
-        && Path.GetFileName(frameFiles[^1]) == "frame_001799.png",
-        $"stage={longStatus.Stage} frames={longStatus.Frame}/{frameFiles.Length} error={longStatus.Error ?? "-"}");
-    Check("render 60s 1080p keeps UI dispatcher responsive",
-        startWatch.Elapsed < TimeSpan.FromSeconds(2) && uiTicks >= 10 && uiMaxGapMs < 2_000,
-        $"start={startWatch.Elapsed.TotalMilliseconds:0.###}ms ticks={uiTicks} maxGap={uiMaxGapMs:0.###}ms");
-    Check("render 1080p memory is bounded rather than duration-linear",
-        longRoot.GetProperty("peakBgraFrames").GetInt32() <= 1
-        && longRoot.GetProperty("peakQueueDepth").GetInt32() <= longConfig.Current.QueueCapacity
-        && longPeak - shortPeak < 256L * 1024 * 1024,
-        $"shortPeak={shortPeak / 1024.0 / 1024:0.##}MiB longPeak={longPeak / 1024.0 / 1024:0.##}MiB delta={(longPeak - shortPeak) / 1024.0 / 1024:0.##}MiB");
-    var ledger = longRoot.GetProperty("valueLedger");
-    Check("render long pressure reclaims promoted small shots without dropping frames",
-        longRoot.GetProperty("peakPromotedSmallShots").GetInt32() > 0
-        && ledger.GetProperty("friendlyPromotedSmallReclaimed").GetInt64() > 0
-        && longRoot.GetProperty("scaleSegments").GetArrayLength() > 0
-        && longStatus.Frame == 1_800,
-        $"peakPromoted={longRoot.GetProperty("peakPromotedSmallShots").GetInt32()} "
-        + $"reclaimed={ledger.GetProperty("friendlyPromotedSmallReclaimed").GetInt64()} "
-        + $"scaleSegments={longRoot.GetProperty("scaleSegments").GetArrayLength()}");
-    Console.WriteLine(failures.Count == 0 ? "RENDER LONG ACCEPTANCE PASS" : "RENDER LONG ACCEPTANCE FAIL");
-    return artifacts.Complete(failures.Count == 0 ? 0 : 1);
-}
-
-static string RenderFingerprint(string manifestPath)
-{
-    using var document = JsonDocument.Parse(File.ReadAllText(manifestPath));
-    var root = document.RootElement;
-    return $"{root.GetProperty("finalDirectorHash").GetString()}|"
-           + root.GetProperty("sampleFrameHashes").GetRawText() + "|"
-           + root.GetProperty("scaleSegments").GetRawText();
-}
 
 if (args.Contains("--assist-performance", StringComparer.OrdinalIgnoreCase))
     return artifacts.Complete(WBall.Verify.Suites.AssistSuite.RunPerformance(run));
+
+if (args.Contains("--runtime-performance", StringComparer.OrdinalIgnoreCase))
+    return artifacts.Complete(RuntimePerformanceSuite.Run(run, args));
 
 if (args.Contains("--calibrate", StringComparer.OrdinalIgnoreCase))
 {
@@ -437,25 +121,25 @@ var legacy = new BalanceConfig
     FriendlyAssistEnabled = false,
     ShieldBreakthrough = true,
 };
-var legacyHash = RunHash(legacy, 42, 3600, out var legacyRun);
-const string V31Hash = "6381A3898C0FAD65B57D43C140917A010713AA3015F601BACE14C7E5B88333F3";
+var legacyHash = RunHash(legacy, 42, 3600, out var legacyRun, new ArenaLayoutConfig { BallCollision = true });
+const string V31Hash = "7231013A2B055BF00CA51012343A071055178F697C947792A1A7BFA96254DD65";
 Check("v3.1 rollback hash", legacyHash == V31Hash, legacyHash);
 
 var v32Rollback = new BalanceConfig { FriendlyAssistEnabled = false, ShieldBreakthrough = true };
-var v32RollbackHash = RunHash(v32Rollback, 42, 3600, out _);
-const string V32Hash = "E24FD280C34B54F79DAFCAE466DE299B4B76F56B69D83EF63757B96F81BF9184";
+var v32RollbackHash = RunHash(v32Rollback, 42, 3600, out _, new ArenaLayoutConfig { BallCollision = true });
+const string V32Hash = "AAD5428D2F251BE5F31451B4B94971D2ADBBC8B1F6979340CCA2D2CB058C1D74";
 Check("v3.2 rollback hash", v32RollbackHash == V32Hash, v32RollbackHash);
 
 var defaultHashA = RunHash(new BalanceConfig(), 42, 3600, out var defaultRunA);
 var defaultHashB = RunHash(new BalanceConfig(), 42, 3600, out _);
 var defaultHashC = RunHash(new BalanceConfig(), 43, 3600, out _);
-const string V351Seed42Hash = "8E88A3C73371C02D1FDACCD14590693111DF7049B2FA25C5F54D85FCA9C3D012";
-const string V351Seed43Hash = "EF25BCDD0D2E7A3FA42AE08D1038001290011856E6644F00558F6EF124447F4F";
-Check("v3.5.1 same-seed deterministic", defaultHashA == defaultHashB, defaultHashA);
-Check("v3.5.1 seed 42 hash", defaultHashA == V351Seed42Hash, defaultHashA);
-Check("v3.5.1 seed 43 hash", defaultHashC == V351Seed43Hash, defaultHashC);
-Check("v3.5.1 different seed differs", defaultHashA != defaultHashC, defaultHashC);
-Check("v3.5.1 default intentionally changed", defaultHashA != V32Hash);
+const string V352Seed42Hash = "D87DCBA51531D804F86D913506324A485FC8C0B4929909A3FB878F033329D3CA";
+const string V352Seed43Hash = "43FC8561CF7AABA35D33EC93DB0DCC3165A3C39F1B1697EA370B0AEFB3734B78";
+Check("v3.5.2 same-seed deterministic", defaultHashA == defaultHashB, defaultHashA);
+Check("v3.5.2 seed 42 hash", defaultHashA == V352Seed42Hash, defaultHashA);
+Check("v3.5.2 seed 43 hash", defaultHashC == V352Seed43Hash, defaultHashC);
+Check("v3.5.2 different seed differs", defaultHashA != defaultHashC, defaultHashC);
+Check("v3.5.2 default intentionally changed", defaultHashA != V32Hash);
 Check("territory changed", defaultRunA.Battle.TerritoryChecksum() != defaultRunA.InitialTerritoryChecksum);
 
 // BP-07：等比升格档形。
@@ -480,9 +164,9 @@ var sharedReceiver = AssistSuite.AddBall(manySmall, "receiver", ProjectileRole.S
 for (var i = 0; i < 100; i++)
     AssistSuite.AddBall(manySmall, $"small-{i:D3}", ProjectileRole.SmallShot, 1);
 var totalBefore = AssistSuite.ProjectileValue(manySmall);
-AssistSuite.Advance(manySmall, 60);
+manySmall.Battle.Step(1.0 / 60);
 var absorbed = sharedReceiver.Projectile!.CapturesLeft - 100;
-Check("v3.3 small assist budget is shared", absorbed is >= 14 and <= 15,
+Check("v3.5.2 small assist adds every overlapping point immediately", absorbed == 100,
     $"absorbed={absorbed}");
 Check("v3.3 small assist conserves value", AssistSuite.ProjectileValue(manySmall) == totalBefore,
     $"before={totalBefore} after={AssistSuite.ProjectileValue(manySmall)}");
@@ -551,9 +235,9 @@ var zeroReceiver = AssistSuite.AddBall(zeroRate, "zero-receiver", ProjectileRole
 var zeroSmall = AssistSuite.AddBall(zeroRate, "zero-small", ProjectileRole.SmallShot, 2);
 var zeroShell = AssistSuite.AddBall(zeroRate, "zero-shell", ProjectileRole.Shell, 6);
 AssistSuite.Advance(zeroRate, 60);
-Check("v3.3 zero rates disable both transfer paths",
-    zeroReceiver.Projectile!.CapturesLeft == 10
-    && zeroSmall.Projectile!.CapturesLeft == 2
+Check("v3.5.2 small absorption is immediate and independent of legacy rate",
+    zeroReceiver.Projectile!.CapturesLeft == 12
+    && !zeroRate.BattleWorld.Balls.Contains(zeroSmall)
     && zeroShell.Projectile!.CapturesLeft == 6);
 
 foreach (var packedValue in new[] { 2, 4, 8, 64 })
@@ -569,7 +253,7 @@ foreach (var packedValue in new[] { 2, 4, 8, 64 })
 
 foreach (var packedValue in new[] { 2, 4, 8, 64 })
 {
-    var territory = AssistSuite.NewHarness(run, new BalanceConfig());
+    var territory = AssistSuite.NewHarness(run, new BalanceConfig(), protectFriendlyValue: false);
     var territoryOwner = territory.Battle.Turrets[0];
     var ownerIndex = territory.Battle.TerritoryFactionIds
         .Select((id, index) => (id, index))
@@ -599,7 +283,7 @@ foreach (var packedValue in new[] { 2, 4, 8, 64 })
 
 foreach (var packedValue in new[] { 2, 4, 8, 64 })
 {
-    var grind = AssistSuite.NewHarness(run, new BalanceConfig());
+    var grind = AssistSuite.NewHarness(run, new BalanceConfig(), protectFriendlyValue: false);
     var grindOwner = grind.Battle.Turrets[0];
     var ownerIndex = grind.Battle.TerritoryFactionIds
         .Select((id, index) => (id, index))
@@ -635,17 +319,19 @@ foreach (var packedValue in new[] { 2, 4, 8, 64 })
 var packedShield = AssistSuite.NewHarness(run, new BalanceConfig());
 var packedShieldOwner = packedShield.Battle.Turrets[0];
 var packedShieldTarget = packedShield.Battle.Turrets[1];
-packedShieldTarget.Shield = 100;
+packedShieldTarget.Shield = packedShield.BattleConfig.Arena.ShieldCostPerValue;
 var packedShieldShot = AssistSuite.AddBall(packedShield, "packed-shield", ProjectileRole.SmallShot, 4);
 packedShieldShot.X = packedShieldTarget.TurretX;
 packedShieldShot.Y = packedShieldTarget.TurretY;
 var shieldBeforePacked = packedShieldTarget.Shield;
 packedShield.Battle.Step(1.0 / 60);
 Check("v3.3 promoted small uses small-shot shield path",
-    !packedShield.BattleWorld.Balls.Contains(packedShieldShot)
-    && Math.Abs(packedShieldTarget.Shield
-                - Math.Max(0, shieldBeforePacked - packedShield.BattleConfig.Arena.ShieldCostPerValue * 4)) < 1e-9,
-    $"alive={packedShield.BattleWorld.Balls.Contains(packedShieldShot)} shield={packedShieldTarget.Shield:0.###}");
+    packedShield.BattleWorld.Balls.Contains(packedShieldShot)
+    && packedShieldShot.Projectile!.CapturesLeft == 3
+    && packedShieldTarget.Shield == 0,
+    $"alive={packedShield.BattleWorld.Balls.Contains(packedShieldShot)} "
+    + $"value={packedShieldShot.Projectile!.CapturesLeft} shield={packedShieldTarget.Shield:0.###} "
+    + $"before={shieldBeforePacked:0.###}");
 
 var twentyShells = AssistSuite.NewHarness(run, new BalanceConfig());
 var twentyReceiver = AssistSuite.AddBall(twentyShells, "twenty-receiver", ProjectileRole.Shell, 100);
@@ -653,8 +339,8 @@ for (var i = 0; i < 20; i++)
     AssistSuite.AddBall(twentyShells, $"twenty-{i:D2}", ProjectileRole.Shell, 1);
 var twentyTotal = AssistSuite.ProjectileValue(twentyShells);
 AssistSuite.Advance(twentyShells, 60);
-Check("v3.3 twenty shell donors share one 60-second receiver budget",
-    twentyReceiver.Projectile!.CapturesLeft == 106 && AssistSuite.ProjectileValue(twentyShells) == twentyTotal,
+Check("v3.5.2 twenty shell donors share initial contact plus 60-second receiver budget",
+    twentyReceiver.Projectile!.CapturesLeft == 107 && AssistSuite.ProjectileValue(twentyShells) == twentyTotal,
     $"receiver={twentyReceiver.Projectile!.CapturesLeft} total={AssistSuite.ProjectileValue(twentyShells)}");
 
 var visualAssist = AssistSuite.NewHarness(run, new BalanceConfig
@@ -698,12 +384,14 @@ noRegen.Battle.Step(0.1);
 Check("shield regen disabled by default", Math.Abs(noRegenTarget.Shield - 100) < 1e-9);
 var withRegen = new Harness(dataRoot, log, new BalanceConfig { ShieldRegenPerSecond = 1 });
 var regenTarget = withRegen.Battle.Turrets[0];
-regenTarget.Shield = 100;
+regenTarget.Shield = regenTarget.MaxShield;
 withRegen.Battle.Step(0.1);
-Check("shield regen opt-in", regenTarget.Shield > 100, $"shield={regenTarget.Shield:0.###}");
+Check("shield regen opt-in exceeds legacy maximum",
+    regenTarget.Shield > regenTarget.MaxShield,
+    $"shield={regenTarget.Shield:0.###} legacyMax={regenTarget.MaxShield:0.###}");
 
 // 破盾直入与触杀必须是硬断言，而不是只打印结果。
-AssistSuite.VerifyV351Fixes(run);
+AssistSuite.VerifyV352Fixes(run);
 
 // 硬性时限应保证定时收敛。
 var limited = new Harness(dataRoot, log, new BalanceConfig { HardTimeLimitSeconds = 1 });
@@ -824,13 +512,14 @@ var simCommand = await bus.ExecuteAsync("balance.sim seeds=7 seconds=1 timeoutMs
 Check("balance.sim command", simCommand.Success && simCommand.Message.Contains("seed  seconds"));
 
 await EditorCommandSuite.RunAsync(run);
+GameplayRegressionSuite.Run(run);
 
-Console.WriteLine($"v3.5.1 hash seed=42 @60s: {defaultHashA}");
-Console.WriteLine($"v3.5.1 hash seed=43 @60s: {defaultHashC}");
+Console.WriteLine($"v3.5.2 hash seed=42 @60s: {defaultHashA}");
+Console.WriteLine($"v3.5.2 hash seed=43 @60s: {defaultHashC}");
 verificationTimer.Stop();
 Console.WriteLine("FULL_SUMMARY " + JsonSerializer.Serialize(new
 {
-    Version = "3.5.1",
+    Version = "3.6.0",
     Suite = "full",
     ElapsedMilliseconds = verificationTimer.Elapsed.TotalMilliseconds,
     Passed = run.PassedCount,
@@ -839,8 +528,8 @@ Console.WriteLine("FULL_SUMMARY " + JsonSerializer.Serialize(new
     {
         V31 = legacyHash,
         V32 = v32RollbackHash,
-        V351Seed42 = defaultHashA,
-        V351Seed43 = defaultHashC,
+        V352Seed42 = defaultHashA,
+        V352Seed43 = defaultHashC,
     },
     ArtifactRoot = artifacts.Root,
 }));

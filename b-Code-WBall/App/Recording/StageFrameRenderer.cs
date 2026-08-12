@@ -2,6 +2,7 @@ using System.Globalization;
 using System.Windows;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
+using WBall.Battle;
 using WBall.Model;
 
 namespace WBall.Recording;
@@ -58,6 +59,8 @@ internal sealed class StageFrameRenderer
 
             if (_static.Stage.HudVisible)
                 DrawHud(dc, frame);
+            if (frame.Victory is not null)
+                DrawVictory(dc, frame, frame.Victory);
         }
 
         var bitmap = new RenderTargetBitmap(_width, _height, 96, 96, PixelFormats.Pbgra32);
@@ -183,21 +186,84 @@ internal sealed class StageFrameRenderer
             DrawText(dc, $"+{assist.Amount}", new Point(to.X + 4, to.Y - 13), 9, Brush(assist.Color), StrongTypeface);
         }
 
+        var totalShield = frame.Turrets.Sum(turret => Math.Max(0, turret.Shield));
         foreach (var turret in frame.Turrets)
         {
             var center = Map(world, _static.ArenaWidth, _static.ArenaHeight, turret.X, turret.Y);
             var radius = ScaleRadius(world, _static.ArenaWidth, _static.ArenaHeight, turret.Radius);
             var shieldRadius = radius * _static.ShieldRingScale;
-            if (turret.Shield > 0)
-                dc.DrawEllipse(null, Pen(turret.Color, 2.2, 0xB0), center, shieldRadius, shieldRadius);
+            DrawRingGauge(
+                dc,
+                center,
+                shieldRadius,
+                Math.Max(2.5, radius * 0.13),
+                ArenaFormulas.ShieldShare(turret.Shield, totalShield),
+                turret.Color);
             var barrelLength = radius * 1.75;
             var angle = turret.BarrelAngleDeg * Math.PI / 180;
             dc.DrawLine(Pen(turret.Color, Math.Max(2, radius * 0.22)), center,
                 new Point(center.X + Math.Cos(angle) * barrelLength, center.Y + Math.Sin(angle) * barrelLength));
             dc.DrawEllipse(Brush(turret.Alive ? turret.Color : "#4B5563"), Pen("#F4F7FA", 1), center, radius, radius);
+            DrawCenteredText(
+                dc,
+                Math.Max(
+                        0,
+                        Math.Floor(turret.Shield / Math.Max(1e-12, _static.ShieldCostPerValue) + 1e-12))
+                    .ToString("0", CultureInfo.InvariantCulture),
+                center,
+                Math.Max(9, radius * 0.55),
+                Brushes.White);
             DrawCenteredText(dc, turret.Name, new Point(center.X, center.Y - radius - 10), 10, Brushes.White);
         }
         dc.Pop();
+    }
+
+    private void DrawRingGauge(
+        DrawingContext dc,
+        Point center,
+        double radius,
+        double thickness,
+        double fraction,
+        string color)
+    {
+        dc.DrawEllipse(null, Pen(color, thickness, 0x2E), center, radius, radius);
+        fraction = Math.Clamp(fraction, 0, 1);
+        if (fraction <= 0.001)
+            return;
+
+        var pen = new Pen(Brush(color, 0xEB), thickness)
+        {
+            StartLineCap = PenLineCap.Round,
+            EndLineCap = PenLineCap.Round,
+        };
+        pen.Freeze();
+        if (fraction >= 0.999)
+        {
+            dc.DrawEllipse(null, pen, center, radius, radius);
+            return;
+        }
+
+        var start = -Math.PI / 2;
+        var sweep = fraction * Math.PI * 2;
+        var from = new Point(center.X + radius * Math.Cos(start), center.Y + radius * Math.Sin(start));
+        var to = new Point(
+            center.X + radius * Math.Cos(start + sweep),
+            center.Y + radius * Math.Sin(start + sweep));
+        var geometry = new StreamGeometry();
+        using (var context = geometry.Open())
+        {
+            context.BeginFigure(from, false, false);
+            context.ArcTo(
+                to,
+                new Size(radius, radius),
+                0,
+                sweep > Math.PI,
+                SweepDirection.Clockwise,
+                true,
+                false);
+        }
+        geometry.Freeze();
+        dc.DrawGeometry(null, pen, geometry);
     }
 
     private void DrawHud(DrawingContext dc, RenderFrameData frame)
@@ -214,7 +280,7 @@ internal sealed class StageFrameRenderer
         var y = bandHeight + 7;
         foreach (var turret in frame.Turrets)
         {
-            var text = $"{turret.Name}  HP {turret.Hp:0}/{turret.MaxHp:0}  SH {turret.Shield:0}/{turret.MaxShield:0}";
+            var text = $"{turret.Name}  HP {turret.Hp:0}/{turret.MaxHp:0}  SH {turret.Shield:0}/∞";
             var ft = Text(text, 10, Brush("#DDE5EF"), UiTypeface);
             var width = ft.Width + 18;
             dc.DrawRoundedRectangle(Brush("#C811161E"), Pen(turret.Color, 1.2), new Rect(x, y, width, 23), 3, 3);
@@ -223,6 +289,73 @@ internal sealed class StageFrameRenderer
             if (x > _width - 160)
                 break;
         }
+    }
+
+    private void DrawVictory(DrawingContext dc, RenderFrameData frame, VictoryAnimationState victory)
+    {
+        var seconds = victory.Progress * RenderJobService.VictoryAnimationSeconds;
+        var dimProgress = Math.Clamp(seconds / 0.5, 0, 1);
+        dc.DrawRectangle(Brush("#000000", (byte)Math.Round(145 * dimProgress)), null, new Rect(0, 0, _width, _height));
+
+        var arenaHost = ArenaHost();
+        var arenaWorld = Fit(arenaHost, _static.ArenaWidth, _static.ArenaHeight);
+        var highlightProgress = Math.Clamp((seconds - 0.5) / 1.0, 0, 1);
+        if (highlightProgress > 0)
+        {
+            var pulse = 0.72 + 0.28 * Math.Sin(highlightProgress * Math.PI);
+            var alpha = (byte)Math.Clamp(110 + 145 * pulse, 0, 255);
+            dc.DrawRoundedRectangle(
+                null,
+                Pen(victory.WinnerColor, Math.Max(3, Math.Min(_width, _height) * 0.006), alpha),
+                arenaWorld,
+                8,
+                8);
+
+            var turret = frame.Turrets.FirstOrDefault(x =>
+                x.Id.Equals(victory.WinnerId, StringComparison.OrdinalIgnoreCase));
+            if (turret is not null)
+            {
+                var center = Map(arenaWorld, _static.ArenaWidth, _static.ArenaHeight, turret.X, turret.Y);
+                var radius = ScaleRadius(arenaWorld, _static.ArenaWidth, _static.ArenaHeight, turret.Radius);
+                var glow = radius * (1.55 + 0.25 * pulse);
+                dc.DrawEllipse(Brush(victory.WinnerColor, (byte)(45 + 55 * pulse)), null, center, glow, glow);
+                dc.DrawEllipse(null, Pen(victory.WinnerColor, Math.Max(3, radius * 0.16), alpha), center, radius * 1.35, radius * 1.35);
+            }
+        }
+
+        var titleProgress = Math.Clamp((seconds - 1.0) / 0.45, 0, 1);
+        if (titleProgress <= 0)
+            return;
+        var eased = 1 - Math.Pow(1 - titleProgress, 3);
+        var scale = 0.92 + 0.08 * eased;
+        var titleSize = Math.Clamp(Math.Min(_width, _height) * 0.092 * scale, 34, 112);
+        var subtitleSize = Math.Clamp(titleSize * 0.48, 20, 54);
+        var centerPoint = new Point(_width / 2d, _height / 2d);
+        var title = Text(victory.WinnerName, titleSize, Brush(victory.WinnerColor), StrongTypeface);
+        var subtitle = Text("胜利", subtitleSize, Brushes.White, StrongTypeface);
+        var panelWidth = Math.Max(title.Width, subtitle.Width) + titleSize * 1.1;
+        var panelHeight = title.Height + subtitle.Height + titleSize * 0.55;
+        var panel = new Rect(
+            centerPoint.X - panelWidth / 2,
+            centerPoint.Y - panelHeight / 2,
+            panelWidth,
+            panelHeight);
+        dc.DrawRoundedRectangle(Brush("#080A0D", 0xDA), Pen(victory.WinnerColor, 2.5), panel, 14, 14);
+        dc.DrawText(title, new Point(centerPoint.X - title.Width / 2, panel.Y + titleSize * 0.22));
+        dc.DrawText(subtitle, new Point(centerPoint.X - subtitle.Width / 2, panel.Bottom - subtitle.Height - titleSize * 0.18));
+    }
+
+    private Rect ArenaHost()
+    {
+        if (!_static.Stage.CompositeVisible)
+            return new Rect(0, 0, _width, _height);
+        if (_static.Stage.Orientation == Stage.StageOrientation.Horizontal)
+        {
+            var split = _width * _static.Stage.Split;
+            return new Rect(split, 0, _width - split, _height);
+        }
+        var verticalSplit = _height * _static.Stage.Split;
+        return new Rect(0, verticalSplit, _width, _height - verticalSplit);
     }
 
     private static Rect Fit(Rect host, double worldWidth, double worldHeight)

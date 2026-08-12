@@ -29,8 +29,15 @@ public sealed class RenderTimeConfigStore
     public void Save()
     {
         Validate(Current);
-        Directory.CreateDirectory(System.IO.Path.GetDirectoryName(_path)!);
-        File.WriteAllText(_path, JsonSerializer.Serialize(Current, JsonOptions));
+        SaveCore(Current);
+    }
+
+    public void Apply(RenderTimeConfig next)
+    {
+        Validate(next);
+        var clone = Clone(next);
+        SaveCore(clone);
+        Current = clone;
     }
 
     public void Reload()
@@ -56,16 +63,33 @@ public sealed class RenderTimeConfigStore
 
     public static void Validate(RenderTimeConfig config)
     {
-        config.Width = Math.Clamp(config.Width, 320, 7680);
-        config.Height = Math.Clamp(config.Height, 240, 4320);
-        config.Fps = Math.Clamp(config.Fps, 1, 120);
-        config.QueueCapacity = Math.Clamp(config.QueueCapacity, 1, 8);
-        config.SlowStartBalls = Math.Clamp(config.SlowStartBalls, 100, 100_000);
-        config.SlowFullBalls = Math.Clamp(config.SlowFullBalls, config.SlowStartBalls + 1, 500_000);
-        config.MinSimulationScale = Math.Clamp(config.MinSimulationScale, 0.05, 1);
-        config.ManualSimulationScale = Math.Clamp(config.ManualSimulationScale, 0.05, 4);
-        config.ScaleQuantization = Math.Clamp(config.ScaleQuantization, 0.01, 0.25);
-        config.HysteresisBalls = Math.Clamp(config.HysteresisBalls, 0, 10_000);
-        config.MaxOutputSeconds = Math.Clamp(config.MaxOutputSeconds, 1, 86_400);
+        if (config.Width is < 320 or > 7680 || (config.Width & 1) != 0)
+            throw new ArgumentOutOfRangeException(nameof(config.Width), "出片宽度须为 320..7680 内的偶数");
+        if (config.Height is < 240 or > 4320 || (config.Height & 1) != 0)
+            throw new ArgumentOutOfRangeException(nameof(config.Height), "出片高度须为 240..4320 内的偶数");
+        if (config.Fps is < 1 or > 120)
+            throw new ArgumentOutOfRangeException(nameof(config.Fps), "FPS 须为 1..120");
+        if (config.QueueCapacity is < 1 or > 8)
+            throw new ArgumentOutOfRangeException(nameof(config.QueueCapacity), "帧队列容量须为 1..8");
+        if (config.SlowStartBalls is < 100 or > 100_000)
+            throw new ArgumentOutOfRangeException(nameof(config.SlowStartBalls), "开始降速球数须为 100..100000");
+        if (config.SlowFullBalls <= config.SlowStartBalls || config.SlowFullBalls > 500_000)
+            throw new ArgumentOutOfRangeException(nameof(config.SlowFullBalls), "最低倍率球数须大于开始降速球数且不超过 500000");
+        if (!double.IsFinite(config.MinSimulationScale) || config.MinSimulationScale is < 0.05 or > 1)
+            throw new ArgumentOutOfRangeException(nameof(config.MinSimulationScale), "最低倍率须为 0.05..1");
+        if (!double.IsFinite(config.ManualSimulationScale) || config.ManualSimulationScale is < 0.05 or > 4)
+            throw new ArgumentOutOfRangeException(nameof(config.ManualSimulationScale), "手动倍率须为 0.05..4");
+        if (!double.IsFinite(config.ScaleQuantization) || config.ScaleQuantization is < 0.01 or > 0.25)
+            throw new ArgumentOutOfRangeException(nameof(config.ScaleQuantization), "倍率量化须为 0.01..0.25");
+        if (config.HysteresisBalls is < 0 or > 10_000)
+            throw new ArgumentOutOfRangeException(nameof(config.HysteresisBalls), "迟滞球数须为 0..10000");
+    }
+
+    private void SaveCore(RenderTimeConfig config)
+    {
+        Directory.CreateDirectory(System.IO.Path.GetDirectoryName(_path)!);
+        var temp = _path + ".tmp";
+        File.WriteAllText(temp, JsonSerializer.Serialize(config, JsonOptions));
+        File.Move(temp, _path, overwrite: true);
     }
 }

@@ -11,19 +11,21 @@ public static class PhysicsEngine
         if (dt <= 0 || dt > 0.1)
             dt = 1.0 / 60.0;
 
-        // 积分 + 碰撞(避免 ToList 分配:倒序索引不安全因可能 Remove,仅销毁阶段拷贝)
+        var index = PhysicsWorldIndex.For(world);
+
+        // 积分 + 碰撞。静态对象按场景结构缓存，保持 Objects 原始顺序。
         var ballCount = world.Balls.Count;
         for (var bi = 0; bi < ballCount; bi++)
         {
             var ball = world.Balls[bi];
-            var (gx, gy) = SampleGravity(world, ball.X, ball.Y);
+            var (gx, gy) = SampleGravity(world, index.QueryArrows(ball.X, ball.Y), ball.X, ball.Y);
             ball.Vx += gx * dt;
             ball.Vy += gy * dt;
             ball.X += ball.Vx * dt;
             ball.Y += ball.Vy * dt;
 
             ResolveWorldBounds(world, ball);
-            foreach (var block in world.OfType(SceneObjectType.Block))
+            foreach (var block in index.QueryBlocks(ball.X, ball.Y, ball.Size))
                 ResolveBallBlock(ball, block);
             foreach (var solid in world.Solids)
                 ResolveBallSolid(ball, solid);
@@ -45,8 +47,14 @@ public static class PhysicsEngine
         for (var i = world.Balls.Count - 1; i >= 0; i--)
         {
             var ball = world.Balls[i];
-            var sink = world.OfType(SceneObjectType.Despawner)
-                .FirstOrDefault(d => Contains(d, ball.X, ball.Y));
+            SceneObject? sink = null;
+            foreach (var candidate in index.QueryDespawner(ball.X, ball.Y))
+            {
+                if (!Contains(candidate, ball.X, ball.Y))
+                    continue;
+                sink = candidate;
+                break;
+            }
             if (sink == null)
                 continue;
 
@@ -79,11 +87,18 @@ public static class PhysicsEngine
     }
 
     public static (double gx, double gy) SampleGravity(SceneWorld world, double x, double y)
+        => SampleGravity(world, PhysicsWorldIndex.For(world).QueryArrows(x, y), x, y);
+
+    private static (double gx, double gy) SampleGravity(
+        SceneWorld world,
+        List<SceneObject> arrows,
+        double x,
+        double y)
     {
         double gx = 0;
         double gy = world.GravityG * SceneWorld.GUnit; // 向下 +Y
 
-        foreach (var arrow in world.OfType(SceneObjectType.Arrow))
+        foreach (var arrow in arrows)
         {
             var cx = arrow.X + arrow.W / 2;
             var cy = arrow.Y + arrow.H / 2;
@@ -335,47 +350,65 @@ public static class PhysicsEngine
     private static void ResolveBallBall(SceneWorld world)
     {
         var balls = world.Balls;
+        if (balls.Count >= 512)
+        {
+            ResolveBallBallIndexed(world, balls);
+            return;
+        }
         for (var i = 0; i < balls.Count; i++)
         {
             for (var j = i + 1; j < balls.Count; j++)
-            {
-                var a = balls[i];
-                var b = balls[j];
-                var dx = b.X - a.X;
-                var dy = b.Y - a.Y;
-                var distSq = dx * dx + dy * dy;
-                var minDist = a.Size + b.Size;
-                if (distSq >= minDist * minDist || distSq < 1e-12)
-                    continue;
-
-                var dist = Math.Sqrt(distSq);
-                var nx = dx / dist;
-                var ny = dy / dist;
-                var overlap = minDist - dist;
-                var ma = Math.Max(0.01, a.Weight);
-                var mb = Math.Max(0.01, b.Weight);
-                var inv = 1.0 / (ma + mb);
-                a.X -= nx * overlap * mb * inv;
-                a.Y -= ny * overlap * mb * inv;
-                b.X += nx * overlap * ma * inv;
-                b.Y += ny * overlap * ma * inv;
-
-                var rvx = b.Vx - a.Vx;
-                var rvy = b.Vy - a.Vy;
-                var velAlong = rvx * nx + rvy * ny;
-                if (velAlong > 0)
-                    continue;
-
-                var e = Math.Clamp(world.BallRestitution, 0, 1);
-                var jImpulse = -(1 + e) * velAlong / (1 / ma + 1 / mb);
-                var ix = jImpulse * nx;
-                var iy = jImpulse * ny;
-                a.Vx -= ix / ma;
-                a.Vy -= iy / ma;
-                b.Vx += ix / mb;
-                b.Vy += iy / mb;
-            }
+                ResolveBallPair(world, balls[i], balls[j]);
         }
+    }
+
+    private static void ResolveBallBallIndexed(SceneWorld world, List<Ball> balls)
+    {
+        var grid = BallCollisionGrid.For(world);
+        grid.Build(balls);
+        for (var i = 0; i < balls.Count; i++)
+        {
+            var a = balls[i];
+            foreach (var j in grid.Query(i, a))
+                ResolveBallPair(world, a, balls[j]);
+        }
+    }
+
+    private static void ResolveBallPair(SceneWorld world, Ball a, Ball b)
+    {
+        var dx = b.X - a.X;
+        var dy = b.Y - a.Y;
+        var distSq = dx * dx + dy * dy;
+        var minDist = a.Size + b.Size;
+        if (distSq >= minDist * minDist || distSq < 1e-12)
+            return;
+
+        var dist = Math.Sqrt(distSq);
+        var nx = dx / dist;
+        var ny = dy / dist;
+        var overlap = minDist - dist;
+        var ma = Math.Max(0.01, a.Weight);
+        var mb = Math.Max(0.01, b.Weight);
+        var inv = 1.0 / (ma + mb);
+        a.X -= nx * overlap * mb * inv;
+        a.Y -= ny * overlap * mb * inv;
+        b.X += nx * overlap * ma * inv;
+        b.Y += ny * overlap * ma * inv;
+
+        var rvx = b.Vx - a.Vx;
+        var rvy = b.Vy - a.Vy;
+        var velAlong = rvx * nx + rvy * ny;
+        if (velAlong > 0)
+            return;
+
+        var e = Math.Clamp(world.BallRestitution, 0, 1);
+        var jImpulse = -(1 + e) * velAlong / (1 / ma + 1 / mb);
+        var ix = jImpulse * nx;
+        var iy = jImpulse * ny;
+        a.Vx -= ix / ma;
+        a.Vy -= iy / ma;
+        b.Vx += ix / mb;
+        b.Vy += iy / mb;
     }
 
     private static bool Contains(SceneObject box, double x, double y)
@@ -386,7 +419,7 @@ public static class PhysicsEngine
 
     public static void TeleportBall(SceneWorld world, Ball ball, SceneObject sink, Action<string>? warn)
     {
-        var spawners = world.OfType(SceneObjectType.Spawner).ToList();
+        var spawners = PhysicsWorldIndex.For(world).Spawners;
         var colorBefore = ball.Color;
         var weightBefore = ball.Weight;
         var sizeBefore = ball.Size;
@@ -403,7 +436,7 @@ public static class PhysicsEngine
             or DespawnFunctions.Kind.Settlement))
             SceneWorld.ApplyPatch(ball, SceneWorld.ParsePatch(sink.PatchJson));
 
-        if (spawners.Count == 0)
+        if (spawners.Length == 0)
         {
             world.Balls.Remove(ball);
             warn?.Invoke($"小球 {ball.Id} 已销毁,但场景中无生成器,已真正移除");
@@ -413,7 +446,7 @@ public static class PhysicsEngine
 
         var fromX = ball.X;
         var fromY = ball.Y;
-        var spawner = spawners[world.Rng.Next(spawners.Count)];
+        var spawner = spawners[world.Rng.Next(spawners.Length)];
         SceneWorld.ApplyPatch(ball, SceneWorld.ParsePatch(spawner.PatchJson));
         // v2.10 DR-01:360° 抛球机 — 确定性随机角度与初速抛出,喷泉式布球
         ball.X = spawner.X + spawner.W / 2;

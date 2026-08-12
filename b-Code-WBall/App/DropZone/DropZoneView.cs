@@ -8,6 +8,7 @@ using AppShell.Core.Logging;
 using WBall.Model;
 using WBall.Presentation;
 using WBall.Sim;
+using WBall.Stage;
 
 namespace WBall.DropZone;
 
@@ -35,6 +36,21 @@ public sealed class DropZoneView : FrameworkElement, ICommandBusAware
     private CommandBus? _bus;
     private readonly IShellLog _log;
     private readonly DispatcherTimer _timer;
+    private readonly FrameInvalidationGate _invalidation;
+    private readonly VisualLodController _localLod = new();
+    private readonly BallBitmapLayer _minimalBallLayer = new();
+    private VisualLodLevel _visualLod;
+    private bool _externalVisualLod;
+    private SemaphoreSlim? _runtimeGate;
+    private RealtimeFrameSnapshot? _frame;
+    private DrawingGroup? _minimalStaticDrawing;
+    private long _minimalStaticVersion = -1;
+    private double _minimalStaticWidth;
+    private double _minimalStaticHeight;
+    private string? _hudCacheKey;
+    private FormattedText? _hudCacheText;
+    private DrawingGroup? _hudCacheDrawing;
+    private long _hudCacheBucket = -1;
     private DateTime _lastTick = DateTime.UtcNow;
 
     private DragKind _dragKind;
@@ -65,11 +81,17 @@ public sealed class DropZoneView : FrameworkElement, ICommandBusAware
     private static Dictionary<string, SolidColorBrush> BrushCache =>
         _brushCache ??= new(StringComparer.OrdinalIgnoreCase);
     private static readonly SolidColorBrush LabelOutlineBrush;
+    private static readonly SolidColorBrush ScreenBackgroundBrush;
+    private static readonly SolidColorBrush HudBackgroundBrush;
 
     static DropZoneView()
     {
         LabelOutlineBrush = new SolidColorBrush(Color.FromArgb(180, 0, 0, 0));
         LabelOutlineBrush.Freeze();
+        ScreenBackgroundBrush = new SolidColorBrush(Color.FromRgb(0x2D, 0x31, 0x36));
+        ScreenBackgroundBrush.Freeze();
+        HudBackgroundBrush = new SolidColorBrush(Color.FromArgb(200, 255, 255, 255));
+        HudBackgroundBrush.Freeze();
     }
 
     public DropZoneView(SceneWorld world, IShellLog log)
@@ -80,7 +102,12 @@ public sealed class DropZoneView : FrameworkElement, ICommandBusAware
         ClipToBounds = true;
         SnapsToDevicePixels = true;
 
-        _world.Changed += () => Dispatcher.BeginInvoke(InvalidateVisual);
+        _invalidation = new FrameInvalidationGate(this);
+        _world.Changed += () =>
+        {
+            if (_frame == null)
+                _invalidation.Request();
+        };
 
         _timer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(16) };
         _timer.Tick += OnTick;
@@ -88,6 +115,30 @@ public sealed class DropZoneView : FrameworkElement, ICommandBusAware
     }
 
     public void AttachBus(CommandBus bus) => _bus = bus;
+
+    public void AttachRuntimeGate(SemaphoreSlim gate) => _runtimeGate = gate;
+
+    public void SetRealtimeFrame(RealtimeFrameSnapshot frame)
+    {
+        _frame = frame;
+        InvalidateVisual();
+    }
+
+    public VisualLodLevel VisualLod => _visualLod;
+    public long RenderAllocatedBytes { get; private set; }
+    public long RenderCount { get; private set; }
+
+    public void SetVisualLod(VisualLodLevel level)
+    {
+        _externalVisualLod = true;
+        if (_visualLod == level)
+            return;
+        _visualLod = level;
+        if (_frame == null)
+            _invalidation.Request();
+        else
+            InvalidateVisual();
+    }
 
     /// <summary>合成舞台由导演统一推进时关闭；纯落球模式保持默认自动推进。</summary>
     public bool AutoStepEnabled { get; set; } = true;
@@ -101,31 +152,90 @@ public sealed class DropZoneView : FrameworkElement, ICommandBusAware
         if (AutoStepEnabled && _world.IsPlaying)
         {
             PhysicsEngine.Step(_world, dt, msg => _log.Warn("sim", msg));
-            InvalidateVisual();
+            _invalidation.Request();
         }
     }
 
     protected override void OnRender(DrawingContext dc)
     {
-        var screenBg = new SolidColorBrush(Color.FromRgb(0x2D, 0x31, 0x36));
-        screenBg.Freeze();
-        dc.DrawRectangle(screenBg, null, new Rect(RenderSize));
+        var allocatedBefore = GC.GetAllocatedBytesForCurrentThread();
+        try
+        {
+            var gate = _runtimeGate;
+            if (gate == null)
+            {
+                RenderCore(dc);
+                return;
+            }
+            gate.Wait();
+            try
+            {
+                RenderCore(dc);
+            }
+            finally
+            {
+                gate.Release();
+            }
+        }
+        finally
+        {
+            RenderAllocatedBytes += GC.GetAllocatedBytesForCurrentThread() - allocatedBefore;
+            RenderCount++;
+        }
+    }
+
+    private void RenderCore(DrawingContext dc)
+    {
+        if (!_externalVisualLod)
+            _visualLod = _localLod.Update(_frame?.EconomyBallCount ?? _world.Balls.Count);
+        dc.DrawRectangle(ScreenBackgroundBrush, null, new Rect(RenderSize));
 
         dc.PushTransform(new TranslateTransform(_viewX, _viewY));
         dc.PushTransform(new ScaleTransform(_zoom, _zoom));
 
-        DrawOutOfBoundsSolids(dc);
-        DrawInterior(dc);
-        DrawObjects(dc);
-        DrawMeshSolids(dc);
-        DrawWireframes(dc);
-        DrawSketch(dc);
+        if (_frame != null && _visualLod == VisualLodLevel.Minimal)
+            DrawMinimalStaticLayer(dc);
+        else
+        {
+            DrawOutOfBoundsSolids(dc);
+            DrawInterior(dc);
+            DrawObjects(dc);
+            DrawMeshSolids(dc);
+            DrawWireframes(dc);
+            DrawSketch(dc);
+        }
         DrawBalls(dc);
 
         dc.Pop();
         dc.Pop();
 
         DrawHud(dc);
+    }
+
+    private void DrawMinimalStaticLayer(DrawingContext dc)
+    {
+        var width = Math.Max(1, _world.WorldWidth);
+        var height = Math.Max(1, _world.WorldHeight);
+        if (_minimalStaticDrawing == null
+            || _minimalStaticVersion != _world.EditVersion
+            || Math.Abs(_minimalStaticWidth - width) > 1e-6
+            || Math.Abs(_minimalStaticHeight - height) > 1e-6)
+        {
+            var drawing = new DrawingGroup();
+            using (var staticDc = drawing.Open())
+            {
+                DrawInterior(staticDc);
+                DrawObjects(staticDc);
+                DrawMeshSolids(staticDc);
+                DrawWireframes(staticDc);
+            }
+            drawing.Freeze();
+            _minimalStaticDrawing = drawing;
+            _minimalStaticVersion = _world.EditVersion;
+            _minimalStaticWidth = width;
+            _minimalStaticHeight = height;
+        }
+        dc.DrawDrawing(_minimalStaticDrawing);
     }
 
     private void DrawOutOfBoundsSolids(DrawingContext dc)
@@ -467,7 +577,19 @@ public sealed class DropZoneView : FrameworkElement, ICommandBusAware
 
     private void DrawBalls(DrawingContext dc)
     {
-        if (_world.TrailEnabled)
+        var frame = _frame;
+        if (frame != null)
+        {
+            DrawSnapshotBalls(dc, frame);
+            return;
+        }
+        if (_visualLod == VisualLodLevel.Minimal)
+        {
+            _minimalBallLayer.Draw(dc, _world.Balls, _world.WorldWidth, _world.WorldHeight);
+            return;
+        }
+
+        if (_world.TrailEnabled && _visualLod != VisualLodLevel.Minimal)
         {
             foreach (var ball in _world.Balls)
             {
@@ -479,7 +601,8 @@ public sealed class DropZoneView : FrameworkElement, ICommandBusAware
                 var last = ball.Trail.Count - 1;
                 foreach (var p in ball.Trail)
                 {
-                    if (prev is { } a)
+                    if (prev is { } a
+                        && (_visualLod == VisualLodLevel.Full || idx % 4 == 0 || idx == last))
                     {
                         var t = (double)idx / last;
                         var alpha = (byte)(24 + t * 180);
@@ -494,21 +617,24 @@ public sealed class DropZoneView : FrameworkElement, ICommandBusAware
             }
         }
 
-        var flashSec = Math.Max(1e-6, _world.TeleportFlashSeconds);
-        foreach (var ball in _world.Balls)
+        if (_visualLod != VisualLodLevel.Minimal)
         {
-            if (ball.TeleportFlashT <= 0)
-                continue;
-            var fade = Math.Clamp(ball.TeleportFlashT / flashSec, 0, 1);
-            var a = (byte)(fade * 220);
-            var flashPen = new Pen(GetBrush(Color.FromArgb(a, 255, 140, 0)), 2)
+            var flashSec = Math.Max(1e-6, _world.TeleportFlashSeconds);
+            foreach (var ball in _world.Balls)
             {
-                DashStyle = DashStyles.Dash,
-            };
-            flashPen.Freeze();
-            dc.DrawLine(flashPen,
-                new Point(ball.TeleportFromX, ball.TeleportFromY),
-                new Point(ball.TeleportToX, ball.TeleportToY));
+                if (ball.TeleportFlashT <= 0)
+                    continue;
+                var fade = Math.Clamp(ball.TeleportFlashT / flashSec, 0, 1);
+                var a = (byte)(fade * 220);
+                var flashPen = new Pen(GetBrush(Color.FromArgb(a, 255, 140, 0)), 2)
+                {
+                    DashStyle = DashStyles.Dash,
+                };
+                flashPen.Freeze();
+                dc.DrawLine(flashPen,
+                    new Point(ball.TeleportFromX, ball.TeleportFromY),
+                    new Point(ball.TeleportToX, ball.TeleportToY));
+            }
         }
 
         foreach (var ball in _world.Balls)
@@ -517,6 +643,8 @@ public sealed class DropZoneView : FrameworkElement, ICommandBusAware
             var fill = GetBrush(color);
             dc.DrawEllipse(fill, null, new Point(ball.X, ball.Y), ball.Size, ball.Size);
 
+            if (_visualLod != VisualLodLevel.Full)
+                continue;
             var label = PublicDefaults.FormatMultiplier(ball.Multiplier);
             var fontSize = Math.Clamp(ball.Size * 0.9, 8, 22);
             var fontPx = (int)Math.Round(fontSize);
@@ -525,6 +653,74 @@ public sealed class DropZoneView : FrameworkElement, ICommandBusAware
             var oy = ball.Y - ft.Height / 2;
             dc.DrawText(outline, new Point(ox + 0.8, oy + 0.8));
             dc.DrawText(ft, new Point(ox, oy));
+        }
+    }
+
+    private void DrawSnapshotBalls(DrawingContext dc, RealtimeFrameSnapshot frame)
+    {
+        if (_visualLod == VisualLodLevel.Minimal)
+        {
+            _minimalBallLayer.Draw(
+                dc, frame.EconomyBalls, frame.EconomyBallCount,
+                frame.EconomyWidth, frame.EconomyHeight);
+            return;
+        }
+
+        if (frame.EconomyTrailEnabled)
+        {
+            for (var ballIndex = 0; ballIndex < frame.EconomyBallCount; ballIndex++)
+            {
+                var ball = frame.EconomyBalls[ballIndex];
+                if (ball.TrailCount < 2)
+                    continue;
+                var color = UiColor.Parse(ball.Color, Colors.DodgerBlue);
+                var last = ball.TrailCount - 1;
+                for (var index = 1; index < ball.TrailCount; index++)
+                {
+                    if (_visualLod != VisualLodLevel.Full && index % 4 != 0 && index != last)
+                        continue;
+                    var from = frame.EconomyTrails[ball.TrailStart + index - 1];
+                    var to = frame.EconomyTrails[ball.TrailStart + index];
+                    var t = (double)index / last;
+                    var alpha = (byte)(24 + t * 180);
+                    var trailPen = new Pen(GetBrush(Color.FromArgb(alpha, color.R, color.G, color.B)), 2);
+                    trailPen.Freeze();
+                    dc.DrawLine(trailPen, new Point(from.X, from.Y), new Point(to.X, to.Y));
+                }
+            }
+        }
+
+        var flashSec = Math.Max(1e-6, frame.EconomyTeleportFlashSeconds);
+        for (var i = 0; i < frame.EconomyBallCount; i++)
+        {
+            var ball = frame.EconomyBalls[i];
+            if (ball.TeleportFlashT <= 0)
+                continue;
+            var fade = Math.Clamp(ball.TeleportFlashT / flashSec, 0, 1);
+            var flashPen = new Pen(GetBrush(Color.FromArgb((byte)(fade * 220), 255, 140, 0)), 2)
+            {
+                DashStyle = DashStyles.Dash,
+            };
+            flashPen.Freeze();
+            dc.DrawLine(
+                flashPen,
+                new Point(ball.TeleportFromX, ball.TeleportFromY),
+                new Point(ball.TeleportToX, ball.TeleportToY));
+        }
+
+        for (var i = 0; i < frame.EconomyBallCount; i++)
+        {
+            var ball = frame.EconomyBalls[i];
+            var color = UiColor.Parse(ball.Color, Colors.DodgerBlue);
+            dc.DrawEllipse(GetBrush(color), null, new Point(ball.X, ball.Y), ball.Size, ball.Size);
+            if (_visualLod != VisualLodLevel.Full)
+                continue;
+            var label = PublicDefaults.FormatMultiplier(ball.Multiplier);
+            var fontPx = (int)Math.Round(Math.Clamp(ball.Size * 0.9, 8, 22));
+            var (text, outline) = GetLabelTexts(label, fontPx);
+            var origin = new Point(ball.X - text.Width / 2, ball.Y - text.Height / 2);
+            dc.DrawText(outline, new Point(origin.X + 0.8, origin.Y + 0.8));
+            dc.DrawText(text, origin);
         }
     }
 
@@ -571,23 +767,53 @@ public sealed class DropZoneView : FrameworkElement, ICommandBusAware
 
     private void DrawHud(DrawingContext dc)
     {
+        var frame = _frame;
+        var bucket = frame != null && _visualLod == VisualLodLevel.Minimal
+            ? frame.Sequence / 6
+            : -1;
+        if (bucket >= 0 && _hudCacheDrawing != null && _hudCacheBucket == bucket)
+        {
+            dc.DrawDrawing(_hudCacheDrawing);
+            return;
+        }
         var tool = _world.Tool.ToString();
-        var state = _world.IsPlaying ? "仿真中" : "编辑";
-        var coll = _world.BallCollisionEnabled ? "球碰:开" : "球碰:关";
-        var text = $"WBall | {state} | 场景 {_world.WorldWidth:0}×{_world.WorldHeight:0} | 工具:{tool} | {coll} | 球:{_world.Balls.Count} | 线框:{_world.Wireframes.Count} | 异形:{_world.Solids.Count}" +
+        var state = (_frame?.EconomyPlaying ?? _world.IsPlaying) ? "仿真中" : "编辑";
+        var coll = (_frame?.EconomyBallCollisionEnabled ?? _world.BallCollisionEnabled) ? "球碰:开" : "球碰:关";
+        var ballCount = _frame?.EconomyBallCount ?? _world.Balls.Count;
+        var text = $"WBall | {state} | 场景 {_world.WorldWidth:0}×{_world.WorldHeight:0} | 工具:{tool} | {coll} | 球:{ballCount} | 线框:{_world.Wireframes.Count} | 异形:{_world.Solids.Count}" +
                    (_world.Sketch.IsEmpty ? "" : $" | 草图:{_world.Sketch.Points.Count}") +
                    " | 滚轮缩放 中键平移";
-        var ft = new FormattedText(
-            text,
-            CultureInfo.CurrentUICulture,
-            FlowDirection.LeftToRight,
-            new Typeface("Segoe UI"),
-            12,
-            Brushes.DimGray,
-            1.25);
-        dc.DrawRectangle(new SolidColorBrush(Color.FromArgb(200, 255, 255, 255)), null,
-            new Rect(0, 0, ft.Width + 16, ft.Height + 10));
-        dc.DrawText(ft, new Point(8, 4));
+        if (!string.Equals(_hudCacheKey, text, StringComparison.Ordinal))
+        {
+            _hudCacheKey = text;
+            _hudCacheText = new FormattedText(
+                text,
+                CultureInfo.CurrentUICulture,
+                FlowDirection.LeftToRight,
+                new Typeface("Segoe UI"),
+                12,
+                Brushes.DimGray,
+                1.25);
+        }
+        var formatted = _hudCacheText!;
+        if (bucket >= 0)
+        {
+            var drawing = new DrawingGroup();
+            using (var drawingDc = drawing.Open())
+            {
+                drawingDc.DrawRectangle(HudBackgroundBrush, null,
+                    new Rect(0, 0, formatted.Width + 16, formatted.Height + 10));
+                drawingDc.DrawText(formatted, new Point(8, 4));
+            }
+            drawing.Freeze();
+            _hudCacheDrawing = drawing;
+            _hudCacheBucket = bucket;
+            dc.DrawDrawing(drawing);
+            return;
+        }
+        dc.DrawRectangle(HudBackgroundBrush, null,
+            new Rect(0, 0, formatted.Width + 16, formatted.Height + 10));
+        dc.DrawText(formatted, new Point(8, 4));
     }
 
     private Point ToWorld(Point screen)
@@ -1010,6 +1236,29 @@ public sealed class DropZoneView : FrameworkElement, ICommandBusAware
 
     private Ball? HitTestBall(Point world)
     {
+        var frame = _frame;
+        if (frame != null)
+        {
+            for (var i = frame.EconomyBallCount - 1; i >= 0; i--)
+            {
+                var b = frame.EconomyBalls[i];
+                var dx = world.X - b.X;
+                var dy = world.Y - b.Y;
+                if (dx * dx + dy * dy <= b.Size * b.Size)
+                {
+                    return new Ball
+                    {
+                        Id = b.Id,
+                        X = b.X,
+                        Y = b.Y,
+                        Size = b.Size,
+                        Color = b.Color,
+                        Multiplier = b.Multiplier,
+                    };
+                }
+            }
+            return null;
+        }
         for (var i = _world.Balls.Count - 1; i >= 0; i--)
         {
             var b = _world.Balls[i];

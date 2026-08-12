@@ -95,11 +95,27 @@ public sealed class BattleConfigStore
         {
             var turrets = JsonSerializer.Deserialize<List<TurretDefinition>>(
                 File.ReadAllText(_turretsPath), JsonOptions) ?? [];
+            var arenaJson = File.ReadAllText(_arenaPath);
             var arena = JsonSerializer.Deserialize<ArenaLayoutConfig>(
-                File.ReadAllText(_arenaPath), JsonOptions) ?? new ArenaLayoutConfig();
+                arenaJson, JsonOptions) ?? new ArenaLayoutConfig();
+            using var arenaDocument = JsonDocument.Parse(arenaJson);
+            var requiresInteractionMigration = !arenaDocument.RootElement
+                .EnumerateObject()
+                .Any(property => property.Name.Equals(
+                    "ballInteractionRulesVersion", StringComparison.OrdinalIgnoreCase));
+            if (requiresInteractionMigration)
+            {
+                arena.BallCollision = false;
+                arena.BallInteractionRulesVersion = 1;
+            }
             Validate(turrets, arena);
             Turrets = turrets;
             Arena = arena;
+            if (requiresInteractionMigration)
+            {
+                Save();
+                _log.Info("battle", "已迁移为球碰撞默认关闭的吸收规则");
+            }
             _log.Info("battle", $"已加载炮台 {turrets.Count} 座,阵型 {arena.Name}");
         }
         catch (Exception ex)

@@ -38,6 +38,15 @@ public static class ArenaFormulas
 
     public static double SmallBallSpeed(ArenaLayoutConfig arena) =>
         arena.SmallBallSpeed * arena.ProjectileSpeedScale;
+
+    public static double AddShield(double current, double increase)
+    {
+        var value = Math.Max(0, current) + Math.Max(0, increase);
+        return double.IsFinite(value) ? value : double.MaxValue;
+    }
+
+    public static double ShieldShare(double shield, double totalShield) =>
+        totalShield <= 0 ? 0 : Math.Clamp(Math.Max(0, shield) / totalShield, 0, 1);
 }
 
 /// <summary>v3.1 AW-05 / AK-04:对战区派生值 — 改一个数,这里立刻能看到它到底改了什么。</summary>

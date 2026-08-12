@@ -1,38 +1,60 @@
-# OneHistoryStudio baseline begin
+# HistoryJanus baseline begin
 *.bak
+*.buildwithskipanalyzers
 *.cache
+*.dwl
+*.dwl2
+*.elk
 *.eod
 *.eox
-*.elk
 *.flk
+*.idb
+*.ilk
 *.lck
 *.log
+*.lref
 *.obj
 *.pdb
 *.slk
+*.suo
+*.tlog
 *.tmp
+*.up2date
+*.user
+*.vsidx
 *.xlk
-# OneHistoryStudio baseline end
+# HistoryJanus baseline end
 
-# OneHistoryStudio managed begin
+# HistoryJanus managed begin
 *.bak
+*.buildwithskipanalyzers
 *.cache
+*.dwl
+*.dwl2
+*.elk
 *.eod
 *.eox
-*.elk
 *.flk
+*.idb
+*.ilk
 *.lck
 *.log
+*.lref
 *.obj
 *.pdb
 *.slk
+*.suo
+*.tlog
 *.tmp
+*.up2date
+*.user
+*.vsidx
 *.xlk
-# OneHistoryStudio managed end
+# HistoryJanus managed end
 
 # ── 2026-022-WBall 项目规则(v3.4 V34-01)──────────────────────────
-# 注意:上面两段由 OHS 生成/维护,只按扩展名忽略,挡不住 .NET 生成目录;
-# 本段按目录忽略,必须写在 managed 段之外,否则 OHS 重写时会被抹掉。
+# 注意:上面两段由 HistoryJanus 生成/维护,只按扩展名忽略,挡不住 .NET 生成目录;
+# 本段按目录忽略,必须写在 managed 段之外,否则 HistoryJanus 重写时会被抹掉。
 
 # .NET 生成目录
 **/bin/
@@ -49,3 +71,7 @@ artifacts/
 # 本机运行时工作区(运行时由 %AppData%\WBall 体系自建,不入库)
 workspace/
 **/Modules/
+
+# 本地开发测试候选区:只跟踪说明,候选/事务/隔离产物均可重建。
+b-Publish/*
+!b-Publish/README.md

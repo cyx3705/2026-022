@@ -28,7 +28,8 @@ public sealed class ArenaLayoutConfig
     public double Width { get; set; } = 960;
     public double Height { get; set; } = 900;
     public double GravityG { get; set; }
-    public bool BallCollision { get; set; } = true;
+    public bool BallCollision { get; set; }
+    public int BallInteractionRulesVersion { get; set; } = 1;
     public string Targeting { get; set; } = "spin";
     public double TurretRadius { get; set; } = 26;
     public int MaxProjectiles { get; set; } = 2000;

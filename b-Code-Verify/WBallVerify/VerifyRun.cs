@@ -73,12 +73,13 @@ internal sealed class Harness
         EconomyWorld = new SceneWorld();
         var scenes = Path.Combine(dataRoot, "scenes");
         SceneStore.Load(EconomyWorld, PlinkoDemoSeeder.EnsureScene(scenes, log));
-        Bridge = new EconomyBridge(Weapons, log, BalanceStore);
+        Bridge = new EconomyBridge(Weapons, log, BalanceStore, BattleConfig);
         EconomyWorld.Settlements = Bridge;
         BattleWorld = new SceneWorld { Defaults = EconomyWorld.Defaults, GravityG = 0 };
         Battle = new BattleRuntime(EconomyWorld, BattleWorld, BattleConfig, Weapons, log, BalanceStore);
+        Stage = new StageState();
         Director = new BattleDirector(
-            EconomyWorld, BattleWorld, Battle, Weapons, Bridge, new StageState(), log, BalanceStore);
+            EconomyWorld, BattleWorld, Battle, Weapons, Bridge, Stage, log, BalanceStore);
         InitialTerritoryChecksum = Battle.TerritoryChecksum();
     }
 
@@ -90,6 +91,7 @@ internal sealed class Harness
     public EconomyBridge Bridge { get; }
     public BattleRuntime Battle { get; }
     public BattleDirector Director { get; }
+    public StageState Stage { get; }
     public int InitialTerritoryChecksum { get; }
 
     private static IReadOnlyList<TurretDefinition> Demo4Turrets() =>

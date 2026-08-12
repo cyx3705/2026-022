@@ -100,7 +100,7 @@ public sealed class BattleDirector
         IsPaused = false;
         _events.Clear();
         EventsRaised = 0;
-        _battle.Reset(seed);
+        _battle.Reset(seed, preserveFactionSetup: true);
 
         var sharedRandom = new Random(seed);
         _economyWorld.UseRandom(sharedRandom);
@@ -133,7 +133,7 @@ public sealed class BattleDirector
     public void Reset()
     {
         _economyWorld.ResetSimulation();
-        _battle.Reset(Seed);
+        _battle.Reset(Seed, preserveFactionSetup: true);
         _battle.AutomaticFire = false;
         ElapsedSeconds = 0;
         Frame = 0;
@@ -236,7 +236,8 @@ public sealed class BattleDirector
                 builder.Append(':').Append(projectile.Role)
                     .Append(':').Append(projectile.CapturesLeft)
                     .Append(':').Append(Round(projectile.FriendlySmallCarry))
-                    .Append(':').Append(Round(projectile.FriendlyShellCarry));
+                    .Append(':').Append(Round(projectile.FriendlyShellCarry))
+                    .Append(':').Append(projectile.FriendlyPendingSmallValue);
             }
             builder.Append('|');
         }

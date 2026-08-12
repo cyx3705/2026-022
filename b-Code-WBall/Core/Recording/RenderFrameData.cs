@@ -45,6 +45,15 @@ public sealed record RenderAssistData(
     int Amount,
     double RemainingSeconds);
 
+/// <summary>实时舞台与离线组合器共用的固定帧胜利展示状态。</summary>
+public sealed record VictoryAnimationState(
+    string WinnerId,
+    string WinnerName,
+    string WinnerColor,
+    int FrameIndex,
+    int TotalFrames,
+    double Progress);
+
 /// <summary>模拟线程交给 STA 合成线程的只读帧投影；不包含 SceneWorld/WPF 对象。</summary>
 public sealed record RenderFrameData(
     long FrameIndex,
@@ -63,7 +72,8 @@ public sealed record RenderFrameData(
     int TerritoryRows,
     int TerritoryVersion,
     ImmutableArray<int>? TerritoryOwners,
-    ImmutableArray<string> TerritoryFactionIds);
+    ImmutableArray<string> TerritoryFactionIds,
+    VictoryAnimationState? Victory = null);
 
 public sealed record RenderStageLayout(
     Stage.StageOrientation Orientation,
@@ -77,6 +87,7 @@ public sealed record RenderStaticData(
     double ArenaWidth,
     double ArenaHeight,
     double ShieldRingScale,
+    double ShieldCostPerValue,
     double LabelFontFactor,
     double LabelFontMin,
     double LabelFontMax,

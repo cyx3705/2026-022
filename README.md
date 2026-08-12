@@ -8,19 +8,20 @@ WBall 是一个基于 .NET 8、WPF 与 OneHistory AppShell 的可配置落球对
 
 ## 当前状态
 
-- 当前应用版本：`3.5.1`
+- 当前应用版本：`3.6.0`
 - 当前代码基线：v3.2.1「离线出片与时间模块」和 v3.3「同阵营积分传递与升格弹回收」已交付
 - v3.4「工程卫生与质量修复」已完成：核心逻辑与 WPF/AppShell 分层，构建、格式、确定性、出片和页面门禁均已通过
 - v3.5「开发敏捷化与场景调试」已完成：新增 Core/Application 快速验证，编辑写入统一走 CommandBus，并以默认右侧的「场景调试」窗口整合对象、小球与公式、裁判功能
-- v3.5.1 修复友军大小球短暂接触时吸收预算不累计的问题；大球破盾后始终反弹，旧 `breakthrough` 配置入口已退役
-- v3.1 回退兼容：关闭三项 v3.2 默认玩法变更后，留档哈希逐字一致
+- v3.5.2 以光环/帧间扫掠接触修复友军吸收：大球接触同阵营小球时，小球当帧回收且全部数值立即等量增加到大球；小球之间永不吸收；大球互吸仍按低速预算执行。球碰撞默认关闭，手动开启后所有友军吸收停止。护盾增长不再受旧 `MaxShield` 封顶，炮台外圈显示本方护盾占四方当前护盾总值的比例
+- v3.6 将出片收敛为 winner-only：冻结场景计算到唯一胜者，追加固定 3 秒胜利动画，并由随应用发布的 FFmpeg 8.0.1 通过 BGRA 标准输入直接生成 H.264 MP4；不再公开时长、模式或 PNG 降级入口
+- 本次碰撞/吸收互斥规则属于确定性玩法升级，v3.1/v3.2 回退配置与当前默认哈希已登记新基线
 - 平台：Windows、`.NET 8`、WPF
 - 框架：`OneHistory.AppShell.Shell 3.0.3`（最终冻结契约，权威项目 `2026-023-AppShell`）
 - MCP：WBall 默认显式关闭；模块托管保持开启
 
-v3.2 在 v3.1 的 `arena_layout.json` 规模配置之上新增独立的 `battle_balance.json`，把射速、升格、对消、护罩、余烬、经济映射、物理弹性和回合收敛参数开放为 `balance.*` 命令与「战斗平衡」设置窗。`balance.sim` 可在隔离实例中按多个种子试跑，不写配置、不改变当前战局；预设档只携带 arena + balance，内置 `standard`、`rush`、`marathon`。详细规格与验收数据见 [`b-Office/WBall_v3.2_战斗平衡自定义与无头试跑需求.md`](./b-Office/WBall_v3.2_战斗平衡自定义与无头试跑需求.md)。
+v3.2 在 v3.1 的 `arena_layout.json` 规模配置之上新增独立的 `battle_balance.json`，把射速、升格、对消、护罩、余烬、经济映射、物理弹性和回合收敛参数开放为 `balance.*` 命令与「战斗平衡」设置窗。`balance.sim` 可在隔离实例中按多个种子试跑，不写配置、不改变当前战局；预设档只携带 arena + balance，内置 `standard`、`rush`、`marathon`。当前有效规则见 [`b-Office/current/技术合同.md`](./b-Office/current/技术合同.md)，旧版本需求只用于按需追溯。
 
-v3.2.1 将出片改为冻结输入后的生产者/消费者任务：MTA 模拟线程使用独立双世界与导演生成不可变帧投影，经有界队列交给专用 STA 线程离屏组合并逐帧写 PNG/Media Foundation，不再重置现场或把整片 BGRA 留在内存。`TimelineClock` 区分输出、模拟和墙钟时间，并只按确定性球数曲线降速。v3.3 新增 `ProjectileRole`，标 2/4/8/64 的升格弹仍是小球；同阵营大球以默认 `0.25`/`0.10` 点每秒的共享预算吸收小球或接收较小大球积分，并以可关闭的弱连线和聚合 `+N` 提供反馈。
+v3.2.1 建立了冻结输入后的生产者/消费者出片任务；v3.6 在此基础上移除定长 PNG/Media Foundation 路径，改由独立双世界持续计算到唯一胜者，经有界队列把不可变帧投影交给专用 STA 线程组合，再把 BGRA 帧直接流入固定 FFmpeg。`TimelineClock` 区分视频、模拟和墙钟时间，并只按确定性球数曲线降速。v3.3 新增 `ProjectileRole`，标 2/4/8/64 的升格弹仍是小球；当前规则下同阵营大球即时等值吸收小球，较大大球以低速预算接收较小大球积分，并以可关闭的弱连线和聚合 `+N` 提供反馈。
 
 ## 主要能力
 
@@ -29,14 +30,14 @@ v3.2.1 将出片改为冻结输入后的生产者/消费者任务：MTA 模拟�
 - 大球、小球、齐射、直射、护盾等武器与弹药机制
 - 固定 60 Hz 时间步进、任意输出 FPS 精确步进、种子复现和确定性哈希
 - 球数驱动的确定性自动慢动作；预览和出片共用倍率公式
-- 可配置对战区、战斗平衡、同阵营低速助力、炮台、武器库、HUD 和出片参数
+- 可配置对战区、战斗平衡、同阵营吸收与低速大球助力、炮台、武器库、HUD 和出片参数
 - 隔离式多种子无头试跑，支持表格/CSV、墙钟超时与取消后部分结果
 - `standard`、`rush`、`marathon` 内置数值预设和用户预设往返
 - 场景、线框、异形实体及属性表编辑
 - 剧本保存、读取与演示场景
 - 命令总线：界面操作均有对应命令，控制台可独立驱动程序
-- 独立世界离线出片、流式 MP4 与完整 PNG 降级
-- 出片 manifest 内置弹丸价值账本、升格小球峰值/回收量和 BGRA/队列峰值，便于长局复核
+- 独立世界 winner-only 离线出片、固定 3 秒胜利动画与 H.264 MP4-only 交付
+- 出片 manifest 记录 FFmpeg 身份、可战价值、淘汰时刻、胜者、动画帧范围、最终哈希和 BGRA/队列峰值
 
 ## 项目结构
 
@@ -49,10 +50,11 @@ b-Code-WBall/
 b-Code-Verify/
   WBallFastVerify/        纯 Core/Application 的快速验证器
   WBallVerify/            确定性与整局模拟验证器
-b-Office/                 需求、版本方案和开发约束
+b-Office/                 现行合同、稳定规则与冻结历史
 b-Picture/                图片素材
 b-Video/                  视频素材
-b-Publish/                发布产物
+b-Publish/                单槽开发测试候选与发布事务区
+z-Package/                最新正式可消费快照
 ```
 
 桌面层的重要模块：
@@ -62,7 +64,7 @@ App/Battle/               战斗运行时、导演、经济桥、配置与剧本
 App/Commands/             WBall 自定义命令
 App/Presentation/         工作区与设置窗口
 App/Stage/                舞台、对战区和 HUD
-App/Recording/            独立出片任务与 Media Foundation 流式编码
+App/Recording/            独立出片任务、胜利帧组合与 FFmpeg 流式编码
 ```
 
 `WBall.Core` 单独以 `net8.0` 构建；验证器会检查其程序集引用，禁止重新引入 WPF、AppShell 或 Media Foundation。
@@ -81,6 +83,37 @@ dotnet build .\b-Code-WBall\WBall.sln -c Debug
 ```text
 b-Code-WBall/App/bin/Debug/net8.0-windows/WBall.exe
 ```
+
+## 开发测试候选
+
+`b-Publish/candidate/` 保存最近一次通过指定验证套件的本地 Debug 测试候选。它使用与 OHS 相同的单槽和事务回滚规则，但不属于正式发布包：
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\b-Code-WBall\eng\Test-Deploy-WBall.ps1 -Suite Fast
+powershell -NoProfile -ExecutionPolicy Bypass -File .\b-Code-WBall\eng\Test-Deploy-WBall.ps1 -Suite Fast,Full
+```
+
+友军小球回收门禁：
+
+```powershell
+dotnet run --project .\b-Code-Verify\WBallVerify\WBallVerify.csproj -c Release -- --friendly-absorb-smoke
+```
+
+当前配置开战与护盾槽门禁：
+
+```powershell
+dotnet run --project .\b-Code-Verify\WBallVerify\WBallVerify.csproj -c Release -- --gameplay-fixes
+```
+
+候选内的 `development-verification.json` 记录源 Commit、脏工作树状态、验证套件、版本和 AppShell 版本。完整规则见 [`b-Publish/README.md`](./b-Publish/README.md)。
+
+正式发布必须从已提交且洁净的源码生成，并通过 Debug/Release、Fast、Full、manifest/checksum 二次复验：
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\b-Code-WBall\eng\Publish-WBall.ps1 -Publish
+```
+
+正式可消费快照只位于 `z-Package/`；脚本不会自动提交、推送或修改 `%AppData%/WBall/`。
 
 ## 运行
 
@@ -114,7 +147,7 @@ balance.assist
 win.show name=scenedebug
 win.show name=render
 render.config
-render.start mode=output seconds=60 seed=42 name=demo
+render.start seed=42 name=demo
 render.status
 ```
 
@@ -130,7 +163,7 @@ render.status
 - `presets/`：内置及用户数值预设
 - `workspace/scenes/`：场景文件
 - `workspace/scenarios/`：对战剧本
-- `workspace/records/`：出片任务、manifest、PNG 与 MP4
+- `workspace/records/`：历史出片结果；v3.6 新任务只生成 manifest 与 MP4
 - `panels/`：控制面板配置
 - `layout/`、`logs/`、`settings.json`：AppShell 布局、日志和设置
 
@@ -149,18 +182,12 @@ $env:DOTNET_EnableWriteXorExecute='0'
 dotnet run --project .\b-Code-Verify\WBallVerify\WBallVerify.csproj -c Release
 ```
 
-验证器覆盖 v3.1/v3.2 回退、v3.3 同种子确定性、ProjectileRole、同阵营共享速率与积分守恒、升格梯度、超 512 队列、护盾、触杀、硬时限、剧本/预设、无头试跑，以及 `balance.*` / `preset.*` 命令烟测。`--render-smoke` 还验证双线程有界流水线、同输入抽样帧哈希、命名场景隔离、暂停/取消、PNG/MP4 降级和 1 万球自动降速/内存红线。
+验证器覆盖 v3.1/v3.2 回退、v3.5.2 当前玩法哈希、ProjectileRole、同阵营积分守恒、升格梯度、超 512 队列、当前配置开战、护盾槽积分换算、剧本/预设、无头试跑，以及 `balance.*` / `preset.*` 命令烟测。`--render-smoke` 验证完整可战价值淘汰、winner-only 接口、3 秒胜利动画、四档分辨率 H.264 MP4、暂停/取消、编码故障事务、确定性和现场隔离。
 
-快速验证时间模块、独立出片、暂停/取消、PNG/MP4 降级和现场隔离：
-
-```powershell
-dotnet run --project .\b-Code-Verify\WBallVerify\WBallVerify.csproj -c Debug -- --render-smoke
-```
-
-完整验证 60 秒 1080p/30 FPS、UI Dispatcher 响应、长短片内存差和升格小球联合回收：
+验证 winner-only、独立出片、暂停/取消、MP4-only 故障事务和现场隔离：
 
 ```powershell
-dotnet run --project .\b-Code-Verify\WBallVerify\WBallVerify.csproj -c Debug -- --render-long-acceptance
+dotnet run --project .\b-Code-Verify\WBallVerify\WBallVerify.csproj -c Release -- --render-smoke
 ```
 
 专项性能与 300px 窄页布局：
@@ -173,28 +200,30 @@ dotnet run --project .\b-Code-Verify\WBallVerify\WBallVerify.csproj -c Debug -- 
 留档哈希：
 
 ```text
-v3.1 rollback, seed=42 @60s: 6381A3898C0FAD65B57D43C140917A010713AA3015F601BACE14C7E5B88333F3
-v3.2 rollback, seed=42 @60s: E24FD280C34B54F79DAFCAE466DE299B4B76F56B69D83EF63757B96F81BF9184
+v3.1 rollback config, seed=42 @60s: 7231013A2B055BF00CA51012343A071055178F697C947792A1A7BFA96254DD65
+v3.2 rollback config, seed=42 @60s: AAD5428D2F251BE5F31451B4B94971D2ADBBC8B1F6979340CCA2D2CB058C1D74
 v3.3 default,  seed=42 @60s: 5A458728F1A2A4296B126E1EC2F50221EC3D212393125EDFAD62EFED12F8525B
 v3.3 default,  seed=43 @60s: E3CC0CFA0E3B630DBB11372AC3F31F03DB031E144858E75D552FC1CC1C3656CA
-v3.5.1 default, seed=42 @60s: 8E88A3C73371C02D1FDACCD14590693111DF7049B2FA25C5F54D85FCA9C3D012
-v3.5.1 default, seed=43 @60s: EF25BCDD0D2E7A3FA42AE08D1038001290011856E6644F00558F6EF124447F4F
+v3.5.2 default, seed=42 @60s: D87DCBA51531D804F86D913506324A485FC8C0B4929909A3FB878F033329D3CA
+v3.5.2 default, seed=43 @60s: 43FC8561CF7AABA35D33EC93DB0DCC3165A3C39F1B1697EA370B0AEFB3734B78
 ```
 
 ## 开发约束
 
-WBall 应用层可以自由扩展，但 AppShell 的指令语法、公共契约和停靠机制属于冻结区。开始修改前请阅读：
+WBall 应用层可以自由扩展，但 AppShell 的指令语法、公共契约和停靠机制属于冻结区。项目文档采用“现行合同 / 稳定规则 / 冻结历史”三层结构，开始修改前按任务读取：
+
+- [WBall 文档中心](./b-Office/文档中心.md)
+- [项目概览](./b-Office/current/项目概览.md)
+- [技术合同](./b-Office/current/技术合同.md)
+- [验证合同](./b-Office/current/验证合同.md)
+- [文档包复用说明](./b-Office/package/复用说明.md)
+- [目录规范](./b-Office/package/目录规范.md)
 
 - [AppShell 3.0 复用合同](../2026-023-AppShell/z-Package-AppShell/AppShell.reuse.md)
 - [AppShell 3.0 API 与指令手册](../2026-023-AppShell/z-Package-AppShell/docs/AppShell_API与指令手册.md)
 - [AppShell 3.0 消费变更摘要](../2026-023-AppShell/z-Package-AppShell/docs/AppShell_3.0_消费变更摘要.md)
-- [`b-Office/WBall_v3.1_对战区自定义与设置窗需求.md`](./b-Office/WBall_v3.1_对战区自定义与设置窗需求.md)
-- [`b-Office/WBall_v3.2_战斗平衡自定义与无头试跑需求.md`](./b-Office/WBall_v3.2_战斗平衡自定义与无头试跑需求.md)
-- [`b-Office/WBall_v3.2.1_结果导向离线出片与时间模块需求.md`](./b-Office/WBall_v3.2.1_结果导向离线出片与时间模块需求.md)
-- [`b-Office/WBall_v3.3_同阵营积分传递与升格弹回收需求.md`](./b-Office/WBall_v3.3_同阵营积分传递与升格弹回收需求.md)
-- [`b-Office/WBall_v3.4_工程卫生与质量修复需求.md`](./b-Office/WBall_v3.4_工程卫生与质量修复需求.md)
-- [`b-Office/WBall_v3.5_开发敏捷化与场景调试需求.md`](./b-Office/WBall_v3.5_开发敏捷化与场景调试需求.md)
-- [`b-Office/WBall_v3.5.1_友军吸收与破盾反弹修复.md`](./b-Office/WBall_v3.5.1_友军吸收与破盾反弹修复.md)
+
+`b-Office/history/` 保存旧版本需求与阶段记录，默认不进入开发上下文；需要追溯时只读取与问题直接相关的文件。
 
 ## 许可证
 

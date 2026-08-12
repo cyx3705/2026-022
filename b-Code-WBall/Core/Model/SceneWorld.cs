@@ -63,7 +63,7 @@ public sealed class SceneWorld
     public string? SelectedBallId { get; set; }
 
     public bool IsPlaying { get; set; }
-    public bool BallCollisionEnabled { get; set; } = true;
+    public bool BallCollisionEnabled { get; set; }
     public double WallRestitution { get; set; } = 0.55;
     public double BallRestitution { get; set; } = 0.85;
     public bool TrailEnabled { get; set; } = false;
@@ -206,6 +206,9 @@ public sealed class SceneWorld
     /// <summary>相对 LastScenePath 是否有未保存改动(提示用)。</summary>
     public bool SceneDirty { get; set; }
 
+    /// <summary>编辑态内容版本；纯模拟刷新不递增，供静态视觉缓存失效。</summary>
+    public long EditVersion { get; private set; }
+
     public event Action? Changed;
 
     /// <summary>投影表需要与内存对齐(可与 UI 刷新分离)。</summary>
@@ -217,7 +220,10 @@ public sealed class SceneWorld
     public void NotifyChanged(bool markDirty = true, bool visual = true, bool project = true)
     {
         if (markDirty)
+        {
             SceneDirty = true;
+            EditVersion++;
+        }
         if (visual)
             Changed?.Invoke();
         if (project)

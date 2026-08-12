@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Text.Json;
+using WBall.Battle;
 using WBall.Editing;
 using WBall.Game;
 using WBall.Model;
@@ -31,6 +32,12 @@ try
     string[] forbidden = ["PresentationCore", "PresentationFramework", "WindowsBase", "AppShell.Core", "AppShell.Services", "AppShell.Shell"];
     Check("fast assemblies exclude desktop dependencies",
         !coreReferences.Concat(applicationReferences).Any(x => forbidden.Contains(x, StringComparer.OrdinalIgnoreCase)));
+
+    Check("shield growth has no gameplay maximum",
+        ArenaFormulas.AddShield(5_000_000, 750_000) == 5_750_000);
+    Check("shield ring uses share of four-faction total",
+        Math.Abs(ArenaFormulas.ShieldShare(100, 400) - 0.25) < 1e-9
+        && ArenaFormulas.ShieldShare(100, 0) == 0);
 
     var world = new SceneWorld();
     var ball = new Ball { Id = "ball1", Color = "#FFFFFF", Multiplier = 1, Size = 12, Weight = 2 };
@@ -88,7 +95,7 @@ finally
 
 var summary = new
 {
-    Version = "3.5.1",
+    Version = "3.6.0",
     Suite = "fast",
     ElapsedMilliseconds = Math.Round(watch.Elapsed.TotalMilliseconds, 3),
     Passed = passed,

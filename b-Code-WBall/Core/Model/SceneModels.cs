@@ -203,6 +203,9 @@ public sealed class ProjectileState
     /// <summary>友军小球/大球积分传递预算；大球按时间预充，最多保留 1 点等待短暂接触。</summary>
     public double FriendlySmallCarry { get; set; }
     public double FriendlyShellCarry { get; set; }
+
+    /// <summary>Friendly small-shot value reclaimed from the world and waiting to enter this shell.</summary>
+    public long FriendlyPendingSmallValue { get; set; }
 }
 
 /// <summary>属性补丁(生成器/销毁器)。</summary>

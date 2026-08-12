@@ -21,6 +21,7 @@ public partial class App : Application
 {
     private ShellLog? _log;
     private RenderJobService? _renderJobs;
+    private RealtimeSimulationCoordinator? _realtimeCoordinator;
     private WorkspaceService? _workspace;
 
     protected override void OnStartup(StartupEventArgs e)
@@ -70,9 +71,9 @@ public partial class App : Application
 
         var weapons = new WeaponCatalog(paths.Root, log);
         var balanceConfig = new BalanceConfigStore(paths.Root, log);
-        var economyBridge = new EconomyBridge(weapons, log, balanceConfig);
-        world.Settlements = economyBridge;
         var battleConfig = new BattleConfigStore(paths.Root, log);
+        var economyBridge = new EconomyBridge(weapons, log, balanceConfig, battleConfig);
+        world.Settlements = economyBridge;
         var scenarios = new ScenarioStore(workspace.Root, log);
         var presets = new PresetStore(paths.Root, log);
         var simulator = new BalanceSimulator(world, battleConfig, weapons, log);
@@ -92,6 +93,7 @@ public partial class App : Application
         var workspaceViews = new WBallWorkspaceViews(
             world, log, paths.Root, battleConfig, balanceConfig, presets, weapons, economyBridge,
             renderTime, stageState, renderJobs);
+        _realtimeCoordinator = workspaceViews.Coordinator;
 
         var config = new ShellConfig
         {
@@ -109,6 +111,9 @@ public partial class App : Application
 
         config.ConfigureCommands = registry =>
         {
+            var commandsBeforeWBall = registry.All()
+                .Select(descriptor => descriptor.Name)
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
             WBallCommands.Register(
                 registry, world, log, scenesDir, sceneProperties,
                 ballEditor, formulaEditor, factionEditor);
@@ -163,6 +168,7 @@ public partial class App : Application
                 world,
                 log);
             RecordCommands.Register(registry, renderJobs, workspaceViews.StageView.ApplyTimeConfig);
+            workspaceViews.Coordinator.WrapNewCommands(registry, commandsBeforeWBall);
         };
 
         var window = new ShellWindow(config, new FileLayoutStore(paths), log, settings, paths.Root);
@@ -251,6 +257,7 @@ public partial class App : Application
 
     protected override void OnExit(ExitEventArgs e)
     {
+        _realtimeCoordinator?.Dispose();
         _renderJobs?.Dispose();
         _workspace?.Dispose();
         _log?.Dispose();
@@ -288,7 +295,7 @@ public partial class App : Application
             System.IO.Directory.CreateDirectory(panelsDir);
             var file = System.IO.Path.Combine(panelsDir, "battle.json");
             System.IO.File.WriteAllText(file,
-                """
+                $$"""
                 {
                   "id": "battle",
                   "title": "对战台",
@@ -298,14 +305,13 @@ public partial class App : Application
                   "controls": [
                     { "type": "label", "id": "bhint", "label": "对战", "default": "一键开战,自动分胜负" },
                     { "type": "number", "id": "seed", "label": "种子", "min": 0, "max": 999999, "step": 1, "default": "42" },
-                    { "type": "button", "label": "一键开战", "command": "demo.play seed={seed}" },
+                    { "type": "button", "label": "一键开战", "command": "{{BattlePanelTemplate.StartCurrentConfigurationCommand}}" },
                     { "type": "button", "label": "暂停", "command": "battle.pause" },
                     { "type": "button", "label": "继续", "command": "battle.resume" },
                     { "type": "button", "label": "重开(回编辑)", "command": "battle.reset", "style": "danger" },
                     { "type": "button", "label": "对战状态", "command": "battle.status" },
                     { "type": "label", "id": "rlbl", "label": "出片", "default": "独立计算画面帧,不录屏" },
-                    { "type": "number", "id": "recsec", "label": "时长(s)", "min": 5, "max": 600, "step": 5, "default": "60" },
-                    { "type": "button", "label": "开始出片", "command": "render.start mode=output seconds={recsec}" },
+                    { "type": "button", "label": "开始出片", "command": "render.start seed={seed}" },
                     { "type": "button", "label": "出片与时间", "command": "win.show name=render" },
                     { "type": "button", "label": "出片状态", "command": "render.status" },
                     { "type": "label", "id": "mlbl", "label": "更多", "default": "低频操作走控制台" },
@@ -362,7 +368,7 @@ public partial class App : Application
                     { "type": "button", "label": "吐球", "command": "ball.spawn" },
                     { "type": "number", "id": "gravity", "label": "重力(g)", "min": 0, "max": 50, "step": 1, "default": "10" },
                     { "type": "button", "label": "应用重力", "command": "sim.gravity g={gravity}" },
-                    { "type": "check", "id": "ballcol", "label": "球-球碰撞", "default": "true" },
+                    { "type": "check", "id": "ballcol", "label": "球-球碰撞", "default": "false" },
                     { "type": "button", "label": "应用碰撞", "command": "sim.ballcollision on={ballcol}" },
                     { "type": "check", "id": "trail", "label": "尾迹", "default": "false" },
                     { "type": "button", "label": "应用尾迹", "command": "sim.trail on={trail}" },

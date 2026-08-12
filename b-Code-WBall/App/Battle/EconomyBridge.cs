@@ -10,12 +10,18 @@ public sealed class EconomyBridge : ISettlementService
     private readonly WeaponCatalog _weapons;
     private readonly IShellLog _log;
     private readonly BalanceConfigStore _balance;
+    private readonly BattleConfigStore? _battleConfig;
 
-    public EconomyBridge(WeaponCatalog weapons, IShellLog log, BalanceConfigStore? balance = null)
+    public EconomyBridge(
+        WeaponCatalog weapons,
+        IShellLog log,
+        BalanceConfigStore? balance = null,
+        BattleConfigStore? battleConfig = null)
     {
         _weapons = weapons;
         _log = log;
         _balance = balance ?? BalanceConfigStore.CreateMemory(new BalanceConfig(), log);
+        _battleConfig = battleConfig;
     }
 
     public Func<WeaponDefinition, bool>? Availability { get; set; }
@@ -69,7 +75,15 @@ public sealed class EconomyBridge : ISettlementService
             if (weapon.Kind == WeaponKind.Shield && ShieldEconomyBlocked?.Invoke() == true)
                 faction.SmallAmmo = SaturatingAdd(faction.SmallAmmo, value); // 决胜期:护盾槽转喂弹药
             else
-                ApplyKind(faction, weapon, value, scaled, config);
+                ApplyKind(
+                    faction,
+                    weapon,
+                    value,
+                    scaled,
+                    config,
+                    config.FriendlyAssistEnabled
+                        ? Math.Max(0, _battleConfig?.Arena.ShieldCostPerValue ?? 1)
+                        : 1);
 
             // v2.11 SA-01/02:小球/齐射/直射共入小球弹药库,模式跟随最后落槽
             if (IsSmallPoolWeapon(weapon.Name))
@@ -117,7 +131,8 @@ public sealed class EconomyBridge : ISettlementService
         WeaponDefinition weapon,
         long value,
         double scaled,
-        BalanceConfig config)
+        BalanceConfig config,
+        double shieldCostPerValue)
     {
         switch (weapon.Kind)
         {
@@ -128,9 +143,13 @@ public sealed class EconomyBridge : ISettlementService
                 faction.Firepower.ProjectileCount = Math.Clamp(1 + (int)Math.Floor(scaled), 1, 200);
                 break;
             case WeaponKind.Shield:
-                faction.Shield = Math.Min(
-                    faction.MaxShield,
-                    faction.Shield + value * weapon.EconomyScale * config.ShieldSlotGainPerValue);
+                var configuredGain = config.ShieldSlotGainPerValue;
+                var rawGainPerPoint = configuredGain > 100
+                    ? configuredGain
+                    : configuredGain * shieldCostPerValue;
+                faction.Shield = ArenaFormulas.AddShield(
+                    faction.Shield,
+                    value * weapon.EconomyScale * rawGainPerPoint);
                 break;
             case WeaponKind.Burst:
                 faction.Firepower.ProjectileCount = Math.Clamp(

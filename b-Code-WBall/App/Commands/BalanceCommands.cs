@@ -124,7 +124,7 @@ public static class BalanceCommands
                 return CommandResult.Ok(
                     $"enabled={B(c.FriendlyAssistEnabled)} visual={B(c.FriendlyAssistVisualEnabled)} smallRate={N(c.FriendlyAbsorbSmallRate)} "
                     + $"shellRate={N(c.FriendlyShellTransferRate)} reach={N(c.FriendlyAssistReachFactor)} "
-                    + $"max={c.FriendlyAssistMaxValue} 60s上限=小球{N(c.FriendlyAbsorbSmallRate * 60)}/大球{N(c.FriendlyShellTransferRate * 60)}\n"
+                    + $"max={c.FriendlyAssistMaxValue} 小球=即时等值吸收 大球60s上限={N(c.FriendlyShellTransferRate * 60)}\n"
                     + $"在场 small={status.SmallShots} shell={status.Shells} ember={status.Embers} other={status.Others}; "
                     + $"最近1秒 小球转移={status.SmallTransferred} 大球转移={status.ShellTransferred} 回收={status.Reclaimed}");
             }),

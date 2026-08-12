@@ -19,15 +19,26 @@ public sealed class StageView : Grid
     private readonly Viewbox _arenaHost;
     private readonly StageHudView _hud;
     private readonly BattleDirector _director;
-    private readonly DispatcherTimer _timer;
+    private readonly DropZoneView _economyView;
+    private readonly ArenaView _arenaView;
+    private readonly VisualLodController _visualLod = new();
+    private readonly RealtimePresentationScheduler _presentation;
     private readonly Grid _content;
-    private DateTime _lastTick = DateTime.UtcNow;
-    private TimelineClock _timeline;
+    private readonly StageVictoryOverlay _victoryOverlay = new();
+    private readonly BattleRuntime _battle;
+    private readonly RealtimeFrameSnapshot[] _frames =
+        [new RealtimeFrameSnapshot(), new RealtimeFrameSnapshot()];
+    private int _publishedFrameIndex;
+    private long _frameSequence;
+    private bool _layoutUpdateQueued;
+    private string? _victoryWinnerId;
+    private long _victoryStartSequence;
 
     public StageView(
         StageState state,
         SceneWorld economyWorld,
         SceneWorld battleWorld,
+        BattleRuntime battle,
         BattleDirector director,
         DropZoneView economyView,
         ArenaView arenaView,
@@ -37,8 +48,12 @@ public sealed class StageView : Grid
         _state = state;
         _economyWorld = economyWorld;
         _battleWorld = battleWorld;
+        _battle = battle;
         _director = director;
-        _timeline = new TimelineClock(renderTime, renderTime.PreviewAutoSlow);
+        _economyView = economyView;
+        _arenaView = arenaView;
+        Coordinator = new RealtimeSimulationCoordinator(
+            state, economyWorld, battleWorld, director, renderTime);
         ClipToBounds = true;
 
         _economyHost = CreateHost(economyView, economyWorld);
@@ -54,44 +69,120 @@ public sealed class StageView : Grid
         };
         _content.Children.Add(_economyHost);
         _content.Children.Add(_arenaHost);
+        _content.Children.Add(_victoryOverlay);
         _content.Children.Add(_hud);
         Children.Add(_content);
         SizeChanged += (_, _) => ApplyAspect();
 
-        _state.Changed += ApplyState;
-        _economyWorld.Changed += UpdateLogicalCanvasSizes;
-        _battleWorld.Changed += UpdateLogicalCanvasSizes;
-        _timer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(16) };
-        _timer.Tick += OnTick;
-        _timer.Start();
+        _state.Changed += QueueApplyState;
+        _economyWorld.Changed += QueueLogicalCanvasSizeUpdate;
+        _battleWorld.Changed += QueueLogicalCanvasSizeUpdate;
+        _presentation = new RealtimePresentationScheduler(Dispatcher, OnTick);
+        Coordinator.Disposed += _presentation.Dispose;
+        Loaded += (_, _) => _presentation.Start();
+        Unloaded += (_, _) => _presentation.Stop();
+        _presentation.Start();
+        CaptureFrame(wait: true);
         ApplyState();
     }
 
     public StageHudView Hud => _hud;
-    public TimelineClock Timeline => _timeline;
+    public TimelineClock Timeline => Coordinator.Timeline;
+    public RealtimeSimulationCoordinator Coordinator { get; }
+    public event Action<long>? FramePresented;
 
     public void ApplyTimeConfig(RenderTimeConfig config) =>
-        _timeline = new TimelineClock(config, config.PreviewAutoSlow);
+        Coordinator.ApplyTimeConfig(config);
 
-    private void OnTick(object? sender, EventArgs e)
+    private void OnTick()
     {
-        var now = DateTime.UtcNow;
-        var elapsed = Math.Min(0.1, (now - _lastTick).TotalSeconds);
-        _lastTick = now;
-        if (_state.Mode is not (StageMode.Play or StageMode.Record))
+        var captured = CaptureFrame(wait: false);
+        var frame = _frames[_publishedFrameIndex];
+        if (!captured)
+            PublishFrame(frame);
+        var ballCount = frame.EconomyBallCount + frame.BattleBallCount;
+        var visualLod = _visualLod.Update(ballCount);
+        _economyView.SetVisualLod(visualLod);
+        _arenaView.SetVisualLod(visualLod);
+        FramePresented?.Invoke(frame.Sequence);
+    }
+
+    private bool CaptureFrame(bool wait)
+    {
+        if (wait)
+            Coordinator.Gate.Wait();
+        else if (!Coordinator.Gate.Wait(0))
+            return false;
+
+        var next = 1 - _publishedFrameIndex;
+        try
         {
-            _timeline.Reset();
-            return;
+            _frames[next].Capture(
+                ++_frameSequence,
+                _state,
+                _economyWorld,
+                _battleWorld,
+                _battle,
+                _director);
+        }
+        finally
+        {
+            Coordinator.Gate.Release();
         }
 
-        // 出片任务使用自己的世界和线程；现场仅 Play 由 timer 驱动。
-        if (_state.Mode == StageMode.Record)
-            return;
+        _publishedFrameIndex = next;
+        PublishFrame(_frames[next]);
+        return true;
+    }
 
-        var ballCount = _economyWorld.Balls.Count + _battleWorld.Balls.Count;
-        var steps = _timeline.AdvanceWallTime(elapsed, ballCount);
-        for (var index = 0; index < steps; index++)
-            _director.AdvanceFixedStep();
+    private void PublishFrame(RealtimeFrameSnapshot frame)
+    {
+        UpdateVictory(frame);
+        _economyView.SetRealtimeFrame(frame);
+        _arenaView.SetRealtimeFrame(frame);
+        _victoryOverlay.SetRealtimeFrame(frame);
+        _hud.SetRealtimeFrame(frame);
+    }
+
+    private void UpdateVictory(RealtimeFrameSnapshot frame)
+    {
+        if (frame.WinnerId == null || frame.WinnerName == null || frame.WinnerColor == null)
+        {
+            _victoryWinnerId = null;
+            frame.SetVictory(null);
+            return;
+        }
+        if (!string.Equals(_victoryWinnerId, frame.WinnerId, StringComparison.OrdinalIgnoreCase))
+        {
+            _victoryWinnerId = frame.WinnerId;
+            _victoryStartSequence = frame.Sequence;
+        }
+        const int liveFps = 30;
+        var total = RenderJobService.VictoryAnimationSeconds * liveFps;
+        var index = (int)Math.Clamp(frame.Sequence - _victoryStartSequence, 0, total - 1);
+        frame.SetVictory(new VictoryAnimationState(
+            frame.WinnerId, frame.WinnerName, frame.WinnerColor,
+            index, total, (index + 1d) / total));
+    }
+
+    private void QueueApplyState()
+    {
+        if (Dispatcher.CheckAccess())
+            ApplyState();
+        else
+            Dispatcher.BeginInvoke(ApplyState);
+    }
+
+    private void QueueLogicalCanvasSizeUpdate()
+    {
+        if (_layoutUpdateQueued)
+            return;
+        _layoutUpdateQueued = true;
+        Dispatcher.BeginInvoke(() =>
+        {
+            _layoutUpdateQueued = false;
+            UpdateLogicalCanvasSizes();
+        });
     }
 
     private static Viewbox CreateHost(FrameworkElement content, SceneWorld world)
@@ -144,6 +235,10 @@ public sealed class StageView : Grid
         Grid.SetColumn(_hud, 0);
         Grid.SetRowSpan(_hud, Math.Max(1, _content.RowDefinitions.Count));
         Grid.SetColumnSpan(_hud, Math.Max(1, _content.ColumnDefinitions.Count));
+        Grid.SetRow(_victoryOverlay, 0);
+        Grid.SetColumn(_victoryOverlay, 0);
+        Grid.SetRowSpan(_victoryOverlay, Math.Max(1, _content.RowDefinitions.Count));
+        Grid.SetColumnSpan(_victoryOverlay, Math.Max(1, _content.ColumnDefinitions.Count));
         ApplyAspect();
         InvalidateVisual();
     }

@@ -211,7 +211,7 @@ public static partial class SceneStore
         world.SelectedSolidId = null;
         world.SelectedBallId = null;
         world.GravityG = 10;
-        world.BallCollisionEnabled = true;
+        world.BallCollisionEnabled = false;
         world.Seed = 42;
         world.SetWorldSize(SceneWorld.DefaultWorldWidth, SceneWorld.DefaultWorldHeight, markDirty: false);
         world.SetIdCounters(1, 1, 1);
